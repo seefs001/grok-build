@@ -260,7 +260,8 @@ pub enum SessionCommand {
     ReplaceSystemPrompt {
         system_prompt: String,
     },
-    /// Sent when a client attaches to a resident session, which the transient `SessionStatus` notification would otherwise never reach.
+    /// Sent when a client attaches to a resident session.
+    /// Transient `SessionStatus` and ACP `usage_update` are not in `updates.jsonl`, so attach has to request a fresh snapshot.
     EmitStatusSnapshot,
     /// Resume hook: after a session is restored with `awaiting_plan_approval == true`, re-issue the `exit_plan_mode` reverse-request.
     /// The client then re-shows its approval UI over a real live waiter.

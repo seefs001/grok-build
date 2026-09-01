@@ -2228,6 +2228,63 @@ impl acp::Agent for MvpAgent {
         }
         res
     }
+    async fn set_session_config_option(
+        &self,
+        args: acp::SetSessionConfigOptionRequest,
+    ) -> Result<acp::SetSessionConfigOptionResponse, acp::Error> {
+        if args.config_id.0.as_ref() != session_config::REASONING_EFFORT_CONFIG_ID {
+            return Err(acp::Error::invalid_params().data(format!(
+                "unknown session config option: {}",
+                args.config_id.0
+            )));
+        }
+        let value_id = args
+            .value
+            .as_value_id()
+            .ok_or_else(|| {
+                acp::Error::invalid_params()
+                    .data("reasoning_effort requires a select value id")
+            })?
+            .0
+            .clone();
+        let session_id = args.session_id;
+        let model_id = self
+            .session_handle_waiting_for_load(&session_id)
+            .await
+            .map(|handle| handle.model_id)
+            .ok_or_else(|| acp::Error::invalid_params().data("unknown session id"))?;
+        let model_state = self.model_state(Some(&session_id));
+        let (effort_options, _) =
+            self.session_reasoning_effort_state(Some(&session_id), &model_state);
+        let effort = session_config::resolve_reasoning_effort_value(
+            &effort_options,
+            value_id.as_ref(),
+        )
+        .ok_or_else(|| {
+            acp::Error::invalid_params().data(format!(
+                "unsupported reasoning effort {value_id:?}; offered: {}",
+                effort_options
+                    .iter()
+                    .map(|option| option.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })?;
+        let mut meta = acp::Meta::new();
+        meta.insert(
+            REASONING_EFFORT_META_KEY.to_string(),
+            reasoning_effort_meta_value(effort),
+        );
+        <Self as acp::Agent>::set_session_model(
+            self,
+            acp::SetSessionModelRequest::new(session_id.clone(), model_id).meta(Some(meta)),
+        )
+        .await?;
+        let model_state = self.model_state(Some(&session_id));
+        Ok(acp::SetSessionConfigOptionResponse::new(
+            self.acp_session_config_options(Some(&session_id), &model_state),
+        ))
+    }
     #[tracing::instrument(
         name = "agent.ext_method",
         skip_all,

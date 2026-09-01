@@ -1050,7 +1050,7 @@ impl ModelsManager {
         let credentials =
             resolve_credentials(current_model, session_auth.as_ref().map(|a| a.key.as_str()));
 
-        sampling_config_for_model(
+        let mut sampler = sampling_config_for_model(
             current_model,
             credentials,
             config.endpoints.alpha_test_key.clone(),
@@ -1059,7 +1059,10 @@ impl ModelsManager {
                 config.endpoints.deployment_key.as_deref(),
             ),
             None,
-        )
+        );
+        sampler.fast = config.models.fast.unwrap_or(false);
+        sampler.reasoning_summary = config.models.reasoning_summary;
+        sampler
     }
 
     fn cache_origin(&self) -> String {

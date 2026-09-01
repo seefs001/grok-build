@@ -48,6 +48,8 @@ auto_update = true                     # check for updates on launch
 [models]
 default = "grok-4.5"                   # model used for new sessions
 web_search = "grok-4.5"                # model used by the web_search tool
+# fast = false                         # SuperGrok Fast (service_tier: priority)
+# reasoning_summary = "concise"        # concise (default) | detailed | auto
 
 # Defaults applied to every model; a per-model [model.<id>] value always wins.
 # See "Custom Models" for the per-model overrides and full details.
@@ -215,6 +217,7 @@ timeout_secs = 1800                    # seconds to wait when enabled (default: 
 proxy_endpoint = "https://proxy.example.com"   # egress proxy URL
 allowed_domains = ["docs.rs", "x.ai"]          # override the built-in allowlist
 allow_local = false                            # true = allow localhost / 127.0.0.0/8 / ::1 only
+allow_rfc2544_ips = false                   # true = allow Surge-style 198.18.0.0/15 Fake IPs
 
 [toolset.web_search]
 # Restrict web_search to these domains (max 5). Mutually exclusive with excluded_domains.
@@ -224,6 +227,8 @@ allowed_domains = ["docs.x.ai", "arxiv.org"]
 ```
 
 `allow_local` is off by default (SSRF fail-closed). Turn it on (or set `GROK_WEB_FETCH_ALLOW_LOCAL=1`) and `web_fetch` may reach **explicit** loopback hosts only — private, link-local, and cloud-metadata ranges stay blocked. Resolution: TOML > env > default off.
+
+`allow_rfc2544_ips` permits hosts that resolve into `198.18.0.0/15`, the RFC 2544 benchmarking range commonly used by Surge-style Fake IP proxies. It is off by default and available only through trusted config-file layers. RFC1918, loopback, link-local, and cloud-metadata ranges remain blocked; URL validation and domain permissions still apply. Restart Grok after changing it.
 
 `[toolset.web_search]` constrains the `web_search` tool's domains — the allowlist/blocklist the search itself runs under (not a post-filter). `allowed_domains` and `excluded_domains` are **mutually exclusive**; if you set both, the allowlist wins and the blocklist is dropped with a warning. An empty or absent list is unbounded. This applies to both the backend-hosted search (models with server-side search) and the client-side fallback. A configured policy is **authoritative**: it cannot be bypassed by the model — the model's own per-call `allowed_domains` is ignored whenever you have set `allowed_domains` or `excluded_domains` here (so a blocklist is a real block). The model's per-call allowlist only applies when you have configured nothing. Resolution: requirements → user `config.toml` → managed → default (unset). Config is read at session start, so edit it before starting a session — changes don't apply mid-session.
 

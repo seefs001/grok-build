@@ -715,8 +715,10 @@ impl MvpAgent {
             session_started_at.elapsed(),
             false,
         );
+        let config_options = self.acp_session_config_options(Some(&session_id), &models);
         Ok(acp::NewSessionResponse::new(session_id)
             .models(Some(models))
+            .config_options((!config_options.is_empty()).then_some(config_options))
             .meta(meta.as_object().cloned()))
     }
     pub(super) async fn load_session_inner(
@@ -1059,8 +1061,10 @@ impl MvpAgent {
             .build_attach_response_meta(&session_id, &summary, persist_data, code_restore_info)
             .await;
         xai_grok_telemetry::unified_log::info("session loaded", Some(session_id.0.as_ref()), None);
+        let config_options = self.acp_session_config_options(Some(&session_id), &model_state);
         let response = acp::LoadSessionResponse::new()
             .models(Some(model_state))
+            .config_options((!config_options.is_empty()).then_some(config_options))
             .meta(response_meta.as_object().cloned());
         if let Some(handle) = self.resident_handle(&session_id) {
             let _ = handle.cmd_tx.send(SessionCommand::AdvertiseCommands);

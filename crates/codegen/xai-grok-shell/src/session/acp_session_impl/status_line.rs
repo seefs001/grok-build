@@ -6,6 +6,7 @@ use std::sync::atomic::Ordering;
 use super::*;
 
 use crate::extensions::notification::{PromptUsage, PromptUsageModel, ticks_to_usd};
+use agent_client_protocol as acp;
 use xai_grok_status_line::{
     STATUS_LINE_SCHEMA_VERSION, StatusLineContext, StatusLineContextWindow, StatusLineCost,
     StatusLineEffort, StatusLineModel, StatusLineRepo, StatusLineSessionUsage, StatusLineTurn,
@@ -255,24 +256,89 @@ impl SessionActor {
     }
 
     /// Wakes [`run_status_emitter`] rather than building inline.
-    /// The payload takes a git discovery and three chat-state round trips, and nothing waits on it.
+    /// The status row takes a git discovery and three chat-state round trips, and nothing waits on it.
+    /// ACP `usage_update` is cheaper (no git) when the client does not draw the row.
     pub(crate) fn emit_status_snapshot_detached(&self) {
         self.status_wake.notify_one();
     }
 
     async fn emit_status_snapshot(&self) {
-        // `send_xai_notification_transient` checks this too; here it skips the build, which an attach re-requests once the gate is open
+        // `send_xai_notification_transient` / `emit_transient_notification` check this too;
+        // here it skips the build, which an attach re-requests once the gate is open.
         if !self.notifications.gateway_enabled.load(Ordering::Relaxed) {
             return;
         }
-        let context = self.build_status_context().await;
-        self.send_xai_notification_transient(XaiSessionUpdate::SessionStatus(Box::new(context)));
+        if self.status_line_enabled.load(Ordering::Relaxed) {
+            let context = self.build_status_context().await;
+            self.emit_acp_usage_update(
+                context.context_window.context_tokens,
+                context.context_window.context_window_size.unwrap_or(0),
+                context.cost.total_cost_usd,
+            );
+            self.send_xai_notification_transient(XaiSessionUpdate::SessionStatus(Box::new(
+                context,
+            )));
+        } else {
+            self.emit_acp_usage_snapshot().await;
+        }
+    }
+
+    /// Occupancy only: sampling config, estimated tokens, optional session cost.
+    /// Used when the client does not draw the status row, so we skip git discovery.
+    async fn emit_acp_usage_snapshot(&self) {
+        let config = self.chat_state_handle.get_sampling_config().await;
+        let size = config.as_ref().map_or(0, |c| c.context_window.get());
+        let used = self
+            .chat_state_handle
+            .try_get_estimated_total_tokens()
+            .await;
+        let cost_usd = self
+            .chat_state_handle
+            .try_get_session_usage()
+            .await
+            .ok()
+            .map(|ledger| PromptUsage::from(&ledger))
+            .and_then(|u| u.totals.cost_usd_ticks)
+            .map(ticks_to_usd);
+        self.emit_acp_usage_update(used, size, cost_usd);
+    }
+
+    /// Live-only ACP `session/update` with `sessionUpdate: "usage_update"`.
+    /// Not persisted: occupancy is rebuilt on the next snapshot, and a replay cursor
+    /// must not point at an id absent from `updates.jsonl`.
+    fn emit_acp_usage_update(&self, used: Option<u64>, size: u64, cost_usd: Option<f64>) {
+        let Some(update) = acp_usage_update(used, size, cost_usd) else {
+            return;
+        };
+        self.emit_transient_notification(acp::SessionNotification::new(
+            self.session_info.id.clone(),
+            acp::SessionUpdate::UsageUpdate(update),
+        ));
     }
 }
 
-/// Seeds the row, then rebuilds it once per wake.
-/// The single enforcement point for the capability: every other trigger only wakes this loop.
-/// The capability is re-read each pass, since a resident session outlives the client that created it.
+/// ACP context-window occupancy. Both `used` and `size` are required by clients
+/// that draw a meter; skip when the window is unknown so they do not paint 0/0.
+fn acp_usage_update(
+    used: Option<u64>,
+    size: u64,
+    cost_usd: Option<f64>,
+) -> Option<acp::UsageUpdate> {
+    let used = used?;
+    if size == 0 {
+        return None;
+    }
+    let mut update = acp::UsageUpdate::new(used, size);
+    if let Some(amount) = cost_usd {
+        update = update.cost(acp::Cost::new(amount, "USD"));
+    }
+    Some(update)
+}
+
+/// Seeds occupancy (and the status row when the client draws one), then rebuilds once per wake.
+/// The single enforcement point: every other trigger only wakes this loop.
+/// Status-row capability is re-read each pass, since a resident session outlives the client that created it.
+/// ACP `usage_update` is independent of that capability.
 /// `is_subagent` cannot change, so it is read once.
 /// The session is held only across a build, so an idle emitter does not keep a finished one and its MCP clients alive.
 pub(super) async fn run_status_emitter(session: std::sync::Weak<SessionActor>) {
@@ -283,9 +349,7 @@ pub(super) async fn run_status_emitter(session: std::sync::Weak<SessionActor>) {
     emit_loop(wake, || {
         let session = session.upgrade()?;
         Some(async move {
-            if session.status_line_enabled.load(Ordering::Relaxed) {
-                session.emit_status_snapshot().await;
-            }
+            session.emit_status_snapshot().await;
         })
     })
     .await;

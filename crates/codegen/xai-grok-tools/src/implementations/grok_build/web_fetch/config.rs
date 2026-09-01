@@ -46,6 +46,10 @@ pub struct WebFetchParams {
     /// allow_local = true` or `GROK_WEB_FETCH_ALLOW_LOCAL=1`.
     #[serde(default)]
     pub allow_local: Option<bool>,
+    /// When true, allow RFC 2544 benchmarking addresses (`198.18.0.0/15`),
+    /// commonly used by local Fake IP proxies. Default: `false`.
+    #[serde(default)]
+    pub allow_rfc2544_ips: Option<bool>,
 }
 
 register_resource!("grok_build", "WebFetch", WebFetchParams);
@@ -79,6 +83,10 @@ impl WebFetchParams {
 
     pub fn allow_local(&self) -> bool {
         self.allow_local.unwrap_or(false)
+    }
+
+    pub fn allow_rfc2544_ips(&self) -> bool {
+        self.allow_rfc2544_ips.unwrap_or(false)
     }
 
     pub fn allowed_domains(&self) -> Vec<String> {

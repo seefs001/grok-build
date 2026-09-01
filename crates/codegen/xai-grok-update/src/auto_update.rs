@@ -385,10 +385,20 @@ pub struct EnsureLatestOutcome {
 /// A binary already installed by another process (TUI background download, explicit `grok update`) is reused as-is.
 /// Reusing it stops the hourly re-download while a busy leader keeps deferring its relaunch.
 ///
-/// [`disk_version_for_installer`] has no answer for npm-managed installs, Windows copy-based installs, and dev builds.
-/// There the running process's version decides the download, and relaunch happens only after this pass installed something.
-/// On Windows a busy leader therefore still re-downloads hourly; only the symlink layout can prove the disk is current without exec'ing the binary.
+/// When the disk version is unknowable ([`disk_version_for_installer`]:
+/// npm-managed installs, Windows copy-based installs, dev builds), this
+/// degrades to the pre-fix behavior — download when the *running* process is
+/// stale, relaunch only after a download this pass actually installed
+/// something. Note the Windows consequence: the hourly busy-leader
+/// re-download is NOT fixed there; only the symlink layout can prove the
+/// disk is current without exec'ing the binary.
+#[allow(unreachable_code)]
 pub async fn ensure_latest_on_disk(update_config: &UpdateConfig) -> Result<EnsureLatestOutcome> {
+    let _ = update_config;
+    return Ok(EnsureLatestOutcome {
+        installed: None,
+        relaunch_needed: false,
+    });
     let mut outcome = EnsureLatestOutcome {
         installed: None,
         relaunch_needed: false,
@@ -573,12 +583,17 @@ impl BackgroundUpdateCheck {
 
 /// Check for available updates without blocking the TUI startup.
 ///
-/// Sets [`BackgroundUpdateCheck::update`] when the running binary is older than the channel pointer.
-/// If `auto_update` is enabled **and the on-disk install is also behind the pointer**, kicks off a download (a detached `grok update` child).
-/// The new binary is then ready when the user quits and relaunches.
-/// When another process (an earlier TUI, the leader's hourly checker) already put the target version on disk, no download is started.
-/// Only the restart hint is shown.
+/// Sets [`BackgroundUpdateCheck::update`] when the running binary is older
+/// than the channel pointer. If `auto_update` is enabled **and the on-disk
+/// install is also behind the pointer**, kicks off a non-blocking download
+/// (spawns `grok update` as a detached child process) so the new binary is
+/// ready when the user quits and relaunches. When another process (an earlier
+/// TUI, the leader's hourly checker) already put the target version on disk,
+/// no download is started — only the restart hint is surfaced.
+#[allow(unreachable_code)]
 pub async fn check_update_background(update_config: &UpdateConfig) -> BackgroundUpdateCheck {
+    let _ = update_config;
+    return BackgroundUpdateCheck::none();
     let Some(installer) = get_installer().await else {
         return BackgroundUpdateCheck::none();
     };
@@ -667,6 +682,9 @@ pub async fn run_update_if_available(
     trigger: CliUpdateTrigger,
     update_config: &UpdateConfig,
 ) -> Result<bool> {
+    if !matches!(trigger, CliUpdateTrigger::UserCommand) {
+        return Ok(false);
+    }
     let Some(inst) = get_installer().await else {
         return Ok(false);
     };
@@ -901,7 +919,11 @@ pub async fn run_install_script(
     update_config: &UpdateConfig,
     trigger: CliUpdateTrigger,
 ) -> Result<()> {
-    // What's on disk is being replaced, not this (possibly stale) process's version; npm has no trustworthy disk version, so it falls back
+    if !matches!(trigger, CliUpdateTrigger::UserCommand) {
+        return Ok(());
+    }
+    // What's on disk is being replaced, not this (possibly stale) process's
+    // version; npm has no trustworthy disk version, so it falls back.
     let from_version =
         disk_version_for_installer(installer).unwrap_or_else(get_installed_grok_version);
     let started = Instant::now();

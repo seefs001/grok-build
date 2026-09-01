@@ -883,6 +883,61 @@ fn test_responses_request_carries_reasoning_effort_nested() {
 }
 
 #[test]
+fn test_responses_request_defaults_reasoning_summary_to_concise() {
+    let req =
+        ConversationRequest::from_items(vec![ConversationItem::user("hi")]).with_model("test");
+    let resp: crate::rs::CreateResponse = (&req).into();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(
+        json.pointer("/reasoning/summary").and_then(|v| v.as_str()),
+        Some("concise"),
+        "stock CLI must send concise unless config overrides; got: {json:#}",
+    );
+}
+
+#[test]
+fn test_responses_request_carries_detailed_reasoning_summary() {
+    let req = ConversationRequest {
+        reasoning_summary: Some(crate::ReasoningSummary::Detailed),
+        ..ConversationRequest::from_items(vec![ConversationItem::user("hi")]).with_model("test")
+    };
+    let resp: crate::rs::CreateResponse = (&req).into();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(
+        json.pointer("/reasoning/summary").and_then(|v| v.as_str()),
+        Some("detailed"),
+        "models.reasoning_summary = detailed must reach the Responses body; got: {json:#}",
+    );
+}
+
+#[test]
+fn test_responses_request_carries_priority_service_tier() {
+    let req = ConversationRequest {
+        service_tier: Some(crate::ServiceTier::Priority),
+        ..ConversationRequest::from_items(vec![ConversationItem::user("hi")]).with_model("test")
+    };
+    let resp: crate::rs::CreateResponse = (&req).into();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert_eq!(
+        json.get("service_tier").and_then(|v| v.as_str()),
+        Some("priority"),
+        "explicit Fast/priority must reach the Responses body; got: {json:#}",
+    );
+}
+
+#[test]
+fn test_responses_request_omits_service_tier_when_unset() {
+    let req =
+        ConversationRequest::from_items(vec![ConversationItem::user("hi")]).with_model("test");
+    let resp: crate::rs::CreateResponse = (&req).into();
+    let json = serde_json::to_value(&resp).unwrap();
+    assert!(
+        json.get("service_tier").is_none(),
+        "omitted service_tier must stay off the wire so API-key traffic stays default; got: {json:#}",
+    );
+}
+
+#[test]
 fn test_responses_request_omits_effort_when_unset() {
     let req =
         ConversationRequest::from_items(vec![ConversationItem::user("hi")]).with_model("test");

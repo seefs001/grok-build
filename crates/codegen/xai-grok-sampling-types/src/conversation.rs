@@ -656,6 +656,11 @@ pub struct ConversationRequest {
     pub trace: Option<Box<dyn TraceContext>>,
     /// Reasoning effort level for reasoning models.
     pub reasoning_effort: Option<crate::ReasoningEffort>,
+    /// Responses `reasoning.summary`. `None` serializes as concise (stock).
+    pub reasoning_summary: Option<crate::ReasoningSummary>,
+    /// Scheduling tier. `None` is omitted on the wire (proxy serves `default`).
+    /// Session Fast fills [`crate::ServiceTier::Priority`].
+    pub service_tier: Option<crate::ServiceTier>,
     /// JSON Schema for structured output (strict mode).
     pub json_schema: Option<serde_json::Value>,
     /// Sticky routing key for prompt-cache reuse; overrides `x_grok_conv_id` for routing.

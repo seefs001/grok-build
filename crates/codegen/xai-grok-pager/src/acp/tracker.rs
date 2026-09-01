@@ -2656,6 +2656,9 @@ fn update_summary(update: &acp::SessionUpdate) -> String {
         acp::SessionUpdate::CurrentModeUpdate(u) => {
             format!("current_mode_update mode={}", u.current_mode_id.0)
         }
+        acp::SessionUpdate::UsageUpdate(u) => {
+            format!("usage_update used={} size={}", u.used, u.size)
+        }
         _ => "unknown_update".to_string(),
     }
 }

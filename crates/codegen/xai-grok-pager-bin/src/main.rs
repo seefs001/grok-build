@@ -2469,8 +2469,12 @@ fn build_update_config() -> UpdateConfig {
     }
     config
 }
-/// Central gate for auto-update checks; add new suppression rules here, not at call sites.
+/// Central gate for auto-update checks; add new suppression rules here,
+/// not at call sites.
+#[allow(unreachable_code)]
 fn should_check_for_updates(no_auto_update_flag: bool) -> bool {
+    let _ = no_auto_update_flag;
+    return false;
     if cfg!(debug_assertions) {
         return false;
     }

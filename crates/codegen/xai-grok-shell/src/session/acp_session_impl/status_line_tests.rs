@@ -1,7 +1,9 @@
 use super::{
-    build_context_window, emit_loop, live_turn, split_normalized_remote, strip_trailing_separator,
+    acp_usage_update, build_context_window, emit_loop, live_turn, split_normalized_remote,
+    strip_trailing_separator,
 };
 use crate::extensions::notification::PromptUsageModel;
+use agent_client_protocol as acp;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -67,6 +69,28 @@ fn percentages_are_whole_numbers_inside_zero_to_one_hundred() {
 fn session_usage_is_null_until_a_call_bills() {
     let window = build_context_window(100_000, Some(0), Some(&PromptUsageModel::default()), 80);
     assert!(window.session_usage.is_none());
+}
+
+#[test]
+fn usage_update_requires_used_and_a_nonzero_window() {
+    assert!(acp_usage_update(None, 100_000, None).is_none());
+    assert!(acp_usage_update(Some(1_000), 0, None).is_none());
+
+    let update = acp_usage_update(Some(0), 100_000, None).unwrap();
+    assert_eq!(update.used, 0);
+    assert_eq!(update.size, 100_000);
+    assert!(update.cost.is_none());
+}
+
+#[test]
+fn usage_update_wire_shape_matches_acp() {
+    let update = acp_usage_update(Some(42_000), 500_000, Some(0.5)).unwrap();
+    let value = serde_json::to_value(acp::SessionUpdate::UsageUpdate(update)).unwrap();
+    assert_eq!(value["sessionUpdate"], "usage_update");
+    assert_eq!(value["used"], 42_000);
+    assert_eq!(value["size"], 500_000);
+    assert_eq!(value["cost"]["amount"], 0.5);
+    assert_eq!(value["cost"]["currency"], "USD");
 }
 
 #[test]
@@ -167,14 +191,36 @@ async fn client_that_cannot_draw_the_row_never_builds_one() {
             let (session, mut painted) = emitter_fixture(Client::WithoutTheRow).await;
             let emitter =
                 tokio::task::spawn_local(super::run_status_emitter(Arc::downgrade(&session)));
-            session.emit_status_snapshot_detached();
-            // Lets the emitter consume the wake while the row is still off.
-            tokio::task::yield_now().await;
+            let occupancy = tokio::time::timeout(Duration::from_secs(10), painted.recv()).await;
+            let occupancy = occupancy
+                .expect("usage_update timed out")
+                .expect("usage_update channel closed");
+            let usage = usage_update(&occupancy).expect("ACP usage_update");
+            assert_eq!(usage.used, 50_000);
+            assert_eq!(usage.size, 100_000);
+            assert!(
+                !is_status_row(&occupancy),
+                "a client that cannot draw the row still received SessionStatus"
+            );
 
             session.status_line_enabled.store(true, Ordering::Relaxed);
             session.emit_status_snapshot_detached();
-            let seeded = tokio::time::timeout(Duration::from_secs(10), painted.recv()).await;
-            assert!(matches!(seeded, Ok(Some(_))), "a later attach must build");
+            let mut saw_row = false;
+            for _ in 0..4 {
+                let next = tokio::time::timeout(Duration::from_secs(10), painted.recv()).await;
+                let next = next
+                    .expect("row snapshot timed out")
+                    .expect("channel closed");
+                if is_status_row(&next) {
+                    saw_row = true;
+                    break;
+                }
+                assert!(
+                    usage_update(&next).is_some(),
+                    "unexpected gateway message before the status row: {next:?}"
+                );
+            }
+            assert!(saw_row, "a later attach must build the status row");
 
             // Ends the loop, so a build started by the earlier wake has landed before the receiver below is drained
             drop(session);
@@ -182,9 +228,45 @@ async fn client_that_cannot_draw_the_row_never_builds_one() {
                 .await
                 .expect("the emitter returns once the session is gone")
                 .expect("the emitter task panicked");
+            while let Ok(msg) = painted.try_recv() {
+                assert!(
+                    usage_update(&msg).is_some() || is_status_row(&msg),
+                    "unexpected leftover gateway message: {msg:?}"
+                );
+            }
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn usage_update_is_sent_without_the_status_row_and_is_not_persisted() {
+    tokio::task::LocalSet::new()
+        .run_until(async {
+            let (gateway_tx, mut gateway_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (persistence_tx, mut persistence_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut actor = super::super::support::create_test_actor(
+                50_000,
+                100_000,
+                85,
+                gateway_tx,
+                persistence_tx,
+            )
+            .await;
+            actor.status_line_enabled.store(false, Ordering::Relaxed);
+            let session = Arc::new(actor);
+            session.emit_status_snapshot().await;
+
+            let msg = gateway_rx.recv().await.expect("usage_update");
+            let usage = usage_update(&msg).expect("ACP usage_update");
+            assert_eq!(usage.used, 50_000);
+            assert_eq!(usage.size, 100_000);
             assert!(
-                painted.try_recv().is_err(),
-                "the wake before x.ai/statusLine built a payload as well"
+                gateway_rx.try_recv().is_err(),
+                "SessionStatus was also sent"
+            );
+            assert!(
+                persistence_rx.try_recv().is_err(),
+                "usage_update must not be written to updates.jsonl"
             );
         })
         .await;
@@ -227,6 +309,24 @@ async fn a_dropped_session_ends_its_parked_emitter() {
                 .expect("the emitter task panicked");
         })
         .await;
+}
+
+fn usage_update(msg: &AcpClientMessage) -> Option<&acp::UsageUpdate> {
+    match msg {
+        AcpClientMessage::SessionNotification(args) => match &args.request.update {
+            acp::SessionUpdate::UsageUpdate(update) => Some(update),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn is_status_row(msg: &AcpClientMessage) -> bool {
+    matches!(
+        msg,
+        AcpClientMessage::ExtNotification(args)
+            if args.request.method.as_ref() == "x.ai/session_notification"
+    )
 }
 
 enum Client {

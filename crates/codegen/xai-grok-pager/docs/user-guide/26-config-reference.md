@@ -398,6 +398,8 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `models.allowed_models` | `string[]` | `pin` | `user` | Glob allowlist for the model picker, default, and `-m`. Empty means no restriction. |
 | `models.default` | `string` | `pin` | `user` | Model used for new sessions. Also `GROK_DEFAULT_MODEL`, `--model`, `-m`. |
 | `models.default_reasoning_effort` | `string` | `yes` | `user` | Default reasoning effort for the default model when the model supports it. |
+| `models.fast` | `boolean` | `yes` | `user` | SuperGrok / cli-chat-proxy Fast (`service_tier: priority`). Default false. |
+| `models.reasoning_summary` | `concise / detailed / auto` | `yes` | `user` | Responses `reasoning.summary`. Default concise. |
 | `models.disabled_models` | `string[]` | `yes` | `user` | Remove these model IDs from the catalog. Wins over `hidden_models`. |
 | `models.extra_headers` | `map<string,string>` | `yes` | `user` | Request headers applied to every model; per-model keys win. |
 | `models.hidden_models` | `string[]` | `yes` | `user` | Hide these model IDs from the picker; `-m` can still select them. |
@@ -531,6 +533,8 @@ User-level configuration lives in `$GROK_HOME/config.toml` (default `~/.grok/con
 | `toolset.bash.timeout_secs` | `number` | `yes` | `user` | Foreground bash command timeout in seconds. |
 | `toolset.file_toolset` | `standard / hashline` | `yes` | `user` | File edit tool scheme. |
 | `toolset.web_fetch.allowed_domains` | `string[]` | `yes` | `user` | Domain allowlist override for web_fetch. |
+| `toolset.web_fetch.allow_local` | `boolean` | `yes` | `user` | Allow explicit loopback hosts only. Also GROK_WEB_FETCH_ALLOW_LOCAL. |
+| `toolset.web_fetch.allow_rfc2544_ips` | `boolean` | `yes` | `user` | Allow hosts resolving to RFC 2544 `198.18.0.0/15` Fake IPs. Default false. |
 | `toolset.web_fetch.proxy_endpoint` | `string` | `yes` | `user` | Egress proxy URL for web_fetch. Also GROK_WEB_FETCH_PROXY. |
 | `toolset.web_search.allowed_domains` | `string[]` | `yes` | `user` | Domain allowlist for client web_search. Overlay-allowlisted. |
 | `toolset.web_search.excluded_domains` | `string[]` | `yes` | `user` | Domain denylist for client web_search. Overlay-allowlisted. |

@@ -4,6 +4,8 @@ use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
 
 use crate::session::unified_list::SessionKind;
 
+pub(crate) const REASONING_EFFORT_CONFIG_ID: &str = "reasoning_effort";
+
 pub(crate) const SELECTABLE_REASONING_EFFORTS: [ReasoningEffort; 5] = [
     ReasoningEffort::Minimal,
     ReasoningEffort::Low,
@@ -77,6 +79,41 @@ pub(crate) fn legacy_session_effort_options() -> Vec<ReasoningEffortOption> {
             default: false,
         })
         .collect()
+}
+
+pub(crate) fn resolve_reasoning_effort_value(
+    options: &[ReasoningEffortOption],
+    value_id: &str,
+) -> Option<ReasoningEffort> {
+    options
+        .iter()
+        .find(|option| option.id == value_id)
+        .map(|option| option.value)
+}
+
+pub(crate) fn build_acp_reasoning_effort_option(
+    options: &[ReasoningEffortOption],
+    current_effort: Option<ReasoningEffort>,
+) -> Option<acp::SessionConfigOption> {
+    let current = current_effort
+        .and_then(|effort| options.iter().find(|option| option.value == effort))
+        .or_else(|| options.iter().find(|option| option.default))?;
+    let values = options
+        .iter()
+        .map(|option| {
+            acp::SessionConfigSelectOption::new(option.id.clone(), option.label.clone())
+                .description(option.description.clone())
+        })
+        .collect::<Vec<_>>();
+    Some(
+        acp::SessionConfigOption::select(
+            REASONING_EFFORT_CONFIG_ID,
+            "Reasoning Effort",
+            current.id.clone(),
+            values,
+        )
+        .category(acp::SessionConfigOptionCategory::ThoughtLevel),
+    )
 }
 
 pub(crate) fn build_session_config_options(
@@ -199,6 +236,69 @@ mod tests {
         assert_eq!(v["label"], "Grok Build");
         assert_eq!(v["selected"], true);
         assert!(v.get("description").is_none());
+    }
+
+    #[test]
+    fn acp_reasoning_effort_option_uses_catalog_ids_and_thought_category() {
+        let efforts = vec![
+            ReasoningEffortOption {
+                id: "balanced".to_string(),
+                value: ReasoningEffort::Medium,
+                label: "Balanced".to_string(),
+                description: None,
+                default: false,
+            },
+            ReasoningEffortOption {
+                id: "deep".to_string(),
+                value: ReasoningEffort::Xhigh,
+                label: "Deep".to_string(),
+                description: Some("Maximum depth".to_string()),
+                default: true,
+            },
+        ];
+        let option = build_acp_reasoning_effort_option(&efforts, Some(ReasoningEffort::Xhigh))
+            .expect("supported effort selector");
+        assert_eq!(option.id.0.as_ref(), REASONING_EFFORT_CONFIG_ID);
+        assert_eq!(
+            option.category,
+            Some(acp::SessionConfigOptionCategory::ThoughtLevel)
+        );
+        let wire = serde_json::to_value(&option).unwrap();
+        assert_eq!(wire["id"], REASONING_EFFORT_CONFIG_ID);
+        assert_eq!(wire["category"], "thought_level");
+        assert_eq!(wire["type"], "select");
+        assert_eq!(wire["currentValue"], "deep");
+        let acp::SessionConfigKind::Select(select) = option.kind else {
+            panic!("reasoning effort must be a select option");
+        };
+        assert_eq!(select.current_value.0.as_ref(), "deep");
+        let acp::SessionConfigSelectOptions::Ungrouped(values) = select.options else {
+            panic!("reasoning effort values must be ungrouped");
+        };
+        assert_eq!(
+            values
+                .iter()
+                .map(|value| value.value.0.as_ref())
+                .collect::<Vec<_>>(),
+            ["balanced", "deep"]
+        );
+        assert_eq!(values[1].description.as_deref(), Some("Maximum depth"));
+    }
+
+    #[test]
+    fn acp_reasoning_effort_value_maps_catalog_id_to_canonical_effort() {
+        let efforts = vec![ReasoningEffortOption {
+            id: "deep".to_string(),
+            value: ReasoningEffort::Xhigh,
+            label: "Deep".to_string(),
+            description: None,
+            default: true,
+        }];
+        assert_eq!(
+            resolve_reasoning_effort_value(&efforts, "deep"),
+            Some(ReasoningEffort::Xhigh)
+        );
+        assert_eq!(resolve_reasoning_effort_value(&efforts, "xhigh"), None);
     }
 
     #[test]

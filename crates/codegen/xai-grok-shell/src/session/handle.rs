@@ -401,9 +401,9 @@ impl SessionHandle {
         self.status_line_enabled
             .store(wanted, std::sync::atomic::Ordering::Relaxed);
     }
-    /// Ask for a fresh status-line snapshot.
-    /// Used when a client attaches: the notification is transient, so there is nothing to replay.
-    /// The emitter re-reads the capability when the wake lands, so [`Self::set_status_line_wanted`] has to be stored before this is sent.
+    /// Ask for a fresh occupancy snapshot (ACP `usage_update`, and the status row when the client draws one).
+    /// Used when a client attaches: those notifications are transient, so there is nothing to replay.
+    /// The emitter re-reads the status-row capability when the wake lands, so [`Self::set_status_line_wanted`] has to be stored before this is sent.
     pub(crate) fn request_status_snapshot(&self) {
         let _ = self.cmd_tx.send(SessionCommand::EmitStatusSnapshot);
     }

@@ -1,0 +1,87 @@
+# Fork changelog
+
+This tree is [seefs001/grok-build](https://github.com/seefs001/grok-build), a
+personal fork of [xai-org/grok-build](https://github.com/xai-org/grok-build).
+Upstream remains the SpaceXAI public snapshot. This file lists **fork-only**
+behavior relative to the last synced upstream commit.
+
+The stock CLI changelog is still
+[`crates/codegen/xai-grok-shell/CHANGELOG.md`](crates/codegen/xai-grok-shell/CHANGELOG.md)
+and [x.ai/build/changelog](https://x.ai/build/changelog).
+
+| | |
+| --- | --- |
+| Upstream | https://github.com/xai-org/grok-build |
+| Fork | https://github.com/seefs001/grok-build |
+| Based on | `bb7f39d5` (“Synced from monorepo”) |
+| `SOURCE_REV` | `d761e8ba538084df023de79d26892eaf73ed7411` |
+| Date | 2026-09-01 |
+
+## Remotes
+
+```sh
+git remote -v
+# origin    https://github.com/seefs001/grok-build.git
+# upstream  https://github.com/xai-org/grok-build.git
+```
+
+Sync from SpaceXAI:
+
+```sh
+git fetch upstream
+git merge upstream/main
+```
+
+## Features
+
+- **Grok 4.6 default reasoning effort** is `xhigh` (catalog default was `high`).
+- **Session Fast** via `[models].fast`. On SuperGrok / cli-chat-proxy traffic
+  (`X-XAI-Token-Auth: xai-grok-cli`), the sampler stamps Responses
+  `service_tier: "priority"`. Grok 4.6 has no `*-fast` model id; Fast is this
+  field. Stock default is off, and API-key traffic never gets the stamp.
+  Explicit `service_tier` on a request is not overwritten.
+- **Reasoning summary** via `[models].reasoning_summary` (`concise` /
+  `detailed` / `auto`). Stock CLI always sent `concise`; that remains the
+  default when the key is unset.
+- **ACP session config** exposes reasoning effort as a `thought_level` select
+  (`config_id = reasoning_effort`) on `new_session` / `load_session`, and
+  implements `session/set_config_option` to switch it through the existing
+  `set_session_model` meta path.
+- **ACP `usage_update`**. Occupancy (used / window size) and optional USD cost
+  are emitted as a live-only `session/update` with `sessionUpdate:
+  "usage_update"`. It is independent of the status-row capability: clients
+  that do not draw the row still get a meter without a git discovery. Attach
+  always requests a fresh snapshot because these notifications are not in
+  `updates.jsonl`.
+- **`web_fetch` RFC 2544 Fake IPs**. `[toolset.web_fetch].allow_rfc2544_ips`
+  (default off, trusted TOML layers only — not the `GROK_CONFIG` overlay)
+  allows hosts that resolve into `198.18.0.0/15` (Surge-style Fake IP).
+  Loopback, RFC1918, link-local, and cloud-metadata ranges stay blocked.
+
+## Privacy and update policy
+
+Hard-off in this fork; not configurable from `config.toml`:
+
+- Telemetry mode is always `Disabled`.
+- Sentry / error reporting is always off.
+- Auth data-collection predicates fail closed (`is_data_collection_disabled`
+  always true; `allows_data_collection` always false).
+- Remote session registry config is never built (`build_registry_config`
+  returns `None`).
+- Auto-update checks are skipped at the pager gate. Background
+  `ensure_latest_on_disk` / `check_update_background` are no-ops. Only an
+  explicit user `grok update` (`CliUpdateTrigger::UserCommand`) may install.
+
+## Config keys added
+
+```toml
+[models]
+fast = false                         # SuperGrok Fast; service_tier = priority
+reasoning_summary = "concise"        # concise | detailed | auto
+
+[toolset.web_fetch]
+allow_rfc2544_ips = false            # 198.18.0.0/15 Fake IP opt-in
+```
+
+See also [05-configuration.md](crates/codegen/xai-grok-pager/docs/user-guide/05-configuration.md)
+and [26-config-reference.md](crates/codegen/xai-grok-pager/docs/user-guide/26-config-reference.md).

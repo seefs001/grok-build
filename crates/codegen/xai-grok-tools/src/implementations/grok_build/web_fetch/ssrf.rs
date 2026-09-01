@@ -8,6 +8,9 @@
 //!   Even when enabled, only **explicit** loopback hosts are allowed
 //!   (`localhost`, `127.0.0.0/8` literals, `::1`). A public hostname that
 //!   resolves to loopback/private stays blocked.
+//! - RFC 2544 benchmarking addresses (`198.18.0.0/15`), commonly used by
+//!   local Fake IP proxies, may be explicitly allowed with
+//!   `WebFetchParams::allow_rfc2544_ips`. All other non-public ranges stay blocked.
 //!
 //! Reference: [IANA IPv4 Special-Purpose Address Registry](https://www.iana.org/assignments/iana-ipv4-special-registry/)
 
@@ -82,6 +85,15 @@ fn ipv4_in_cidr(ip: Ipv4Addr, base: [u8; 4], prefix: u8) -> bool {
     (ip & mask) == (base & mask)
 }
 
+fn is_rfc2544_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => ipv4_in_cidr(v4, [198, 18, 0, 0], 15),
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .is_some_and(|v4| ipv4_in_cidr(v4, [198, 18, 0, 0], 15)),
+    }
+}
+
 fn is_non_public_ipv6(ip: Ipv6Addr) -> bool {
     if let Some(v4) = ip.to_ipv4_mapped() {
         return is_non_public_ipv4(v4);
@@ -112,8 +124,16 @@ fn is_loopback_addr(ip: IpAddr) -> bool {
 ///
 /// Dual-gate: even with local binding allowed, only explicit loopback hosts
 /// may use loopback IPs; private/link-local never open via this flag.
-pub(crate) fn is_blocked_for_host(ip: IpAddr, host: &str, allow_local: bool) -> bool {
+fn is_blocked_for_host_with_policy(
+    ip: IpAddr,
+    host: &str,
+    allow_local: bool,
+    allow_rfc2544_ips: bool,
+) -> bool {
     if !is_non_public_ip(ip) {
+        return false;
+    }
+    if allow_rfc2544_ips && is_rfc2544_ip(ip) {
         return false;
     }
     if allow_local && is_loopback_addr(ip) && is_explicit_local_host(host) {
@@ -122,12 +142,21 @@ pub(crate) fn is_blocked_for_host(ip: IpAddr, host: &str, allow_local: bool) -> 
     true
 }
 
+#[cfg(test)]
+fn is_blocked_for_host(ip: IpAddr, host: &str, allow_local: bool) -> bool {
+    is_blocked_for_host_with_policy(ip, host, allow_local, false)
+}
+
 /// Resolve hostname via DNS and verify none of the resolved addresses are
 /// blocked under the SSRF policy.
 ///
 /// `allow_local` comes from tool config (`WebFetchParams::allow_local`); it is
 /// not read from the environment here so the agent cannot flip the policy.
-pub(crate) async fn check_ssrf(url: &Url, allow_local: bool) -> Result<(), WebFetchError> {
+pub(crate) async fn check_ssrf(
+    url: &Url,
+    allow_local: bool,
+    allow_rfc2544_ips: bool,
+) -> Result<(), WebFetchError> {
     let host = url
         .host_str()
         .ok_or_else(|| WebFetchError::SingleLabelHost {
@@ -136,7 +165,7 @@ pub(crate) async fn check_ssrf(url: &Url, allow_local: bool) -> Result<(), WebFe
 
     // If the host is already a literal IP, check it directly.
     if let Ok(ip) = host.parse::<IpAddr>() {
-        if is_blocked_for_host(ip, host, allow_local) {
+        if is_blocked_for_host_with_policy(ip, host, allow_local, allow_rfc2544_ips) {
             return Err(WebFetchError::SsrfBlocked {
                 host: host.to_string(),
                 ip,
@@ -165,7 +194,9 @@ pub(crate) async fn check_ssrf(url: &Url, allow_local: bool) -> Result<(), WebFe
     // that resolves to 127.0.0.1 stays blocked.
     addrs
         .iter()
-        .find(|addr| is_blocked_for_host(addr.ip(), host, allow_local))
+        .find(|addr| {
+            is_blocked_for_host_with_policy(addr.ip(), host, allow_local, allow_rfc2544_ips)
+        })
         .map_or(Ok(()), |addr| {
             Err(WebFetchError::SsrfBlocked {
                 host: host.to_string(),
@@ -233,6 +264,35 @@ mod tests {
         assert!(is_non_public_ip("240.0.0.1".parse().unwrap()));
         assert!(is_non_public_ip("0.1.2.3".parse().unwrap()));
         assert!(is_non_public_ip("198.18.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn fake_ip_requires_explicit_rfc2544_opt_in() {
+        let fake_ip = "198.18.1.12".parse().unwrap();
+        assert!(is_blocked_for_host_with_policy(
+            fake_ip,
+            "github.com",
+            false,
+            false
+        ));
+        assert!(!is_blocked_for_host_with_policy(
+            fake_ip,
+            "github.com",
+            false,
+            true
+        ));
+        assert!(is_blocked_for_host_with_policy(
+            "10.0.0.1".parse().unwrap(),
+            "internal.example.com",
+            false,
+            true
+        ));
+        assert!(is_blocked_for_host_with_policy(
+            "169.254.169.254".parse().unwrap(),
+            "metadata.example.com",
+            false,
+            true
+        ));
     }
 
     #[test]
@@ -389,7 +449,7 @@ mod tests {
     #[tokio::test]
     async fn ssrf_blocks_ip_literal_private() {
         let url = Url::parse("https://10.0.0.1/secret").unwrap();
-        let result = check_ssrf(&url, false).await;
+        let result = check_ssrf(&url, false, false).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("private"));
     }
@@ -397,20 +457,20 @@ mod tests {
     #[tokio::test]
     async fn ssrf_blocks_loopback_literal_by_default() {
         let url = Url::parse("http://127.0.0.1:8080/").unwrap();
-        let result = check_ssrf(&url, false).await;
+        let result = check_ssrf(&url, false, false).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn ssrf_allows_loopback_literal_when_opted_in() {
         let url = Url::parse("http://127.0.0.1:8080/").unwrap();
-        assert!(check_ssrf(&url, true).await.is_ok());
+        assert!(check_ssrf(&url, true, false).await.is_ok());
     }
 
     #[tokio::test]
     async fn ssrf_allows_ip_literal_public() {
         let url = Url::parse("https://1.1.1.1/").unwrap();
-        let result = check_ssrf(&url, false).await;
+        let result = check_ssrf(&url, false, false).await;
         assert!(result.is_ok());
     }
 }

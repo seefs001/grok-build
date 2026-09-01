@@ -525,9 +525,11 @@ impl MvpAgent {
         )
     }
     /// Build a `RegistryConfig` if the feature is enabled (for passing to persistence actor).
+    #[allow(unreachable_code)]
     pub(super) fn build_registry_config(
         &self,
     ) -> Option<crate::session::RegistryConfig> {
+        return None;
         let remote = self
             .cfg
             .borrow()
@@ -2027,6 +2029,8 @@ impl MvpAgent {
         let deployment_id = crate::managed_config::resolve_deployment_id(
             cfg.endpoints.deployment_key.as_deref(),
         );
+        let reasoning_summary = cfg.models.reasoning_summary;
+        let fast = cfg.models.fast.unwrap_or(false);
         drop(cfg);
         let user_id = self
             .auth_manager
@@ -2042,6 +2046,8 @@ impl MvpAgent {
             user_id,
         );
         config.origin_client = origin_client;
+        config.fast = fast;
+        config.reasoning_summary = reasoning_summary;
         config
     }
     /// Resolve sampling config for a model by ID, falling back to the global default on resolution failure.
@@ -2244,6 +2250,7 @@ impl MvpAgent {
     /// - `proxy_endpoint`: `[toolset.web_fetch] proxy_endpoint` > `GROK_WEB_FETCH_PROXY` > remote settings > None
     /// - `allowed_domains`: `[toolset.web_fetch] allowed_domains` > remote settings > built-in defaults
     /// - `allow_local`: `[toolset.web_fetch] allow_local` > `GROK_WEB_FETCH_ALLOW_LOCAL` > false
+    /// - `allow_rfc2544_ips`: trusted TOML layers > false
     pub(super) fn prepare_web_fetch_config(
         &self,
     ) -> xai_grok_tools::implementations::grok_build::web_fetch::WebFetchConfig {
@@ -3262,11 +3269,11 @@ impl MvpAgent {
         }
         acp::SessionModelState::new(model_id, available_models)
     }
-    pub(super) fn session_config_options(
+    pub(super) fn session_reasoning_effort_state(
         &self,
         session_id: Option<&acp::SessionId>,
         state: &acp::SessionModelState,
-    ) -> Vec<session_config::SessionConfigOption> {
+    ) -> (Vec<ReasoningEffortOption>, Option<ReasoningEffort>) {
         let model_id = resolve_catalog_key(
                 &self.models_manager.models(),
                 &state.current_model_id,
@@ -3300,12 +3307,37 @@ impl MvpAgent {
         } else {
             None
         };
+        (effort_options, current_effort)
+    }
+    pub(super) fn session_config_options(
+        &self,
+        session_id: Option<&acp::SessionId>,
+        state: &acp::SessionModelState,
+    ) -> Vec<session_config::SessionConfigOption> {
+        let model_id = resolve_catalog_key(
+                &self.models_manager.models(),
+                &state.current_model_id,
+            )
+            .unwrap_or_else(|| state.current_model_id.clone());
+        let (effort_options, current_effort) =
+            self.session_reasoning_effort_state(session_id, state);
         session_config::build_session_config_options(
             &state.available_models,
             &model_id,
             &effort_options,
             current_effort,
         )
+    }
+    pub(super) fn acp_session_config_options(
+        &self,
+        session_id: Option<&acp::SessionId>,
+        state: &acp::SessionModelState,
+    ) -> Vec<acp::SessionConfigOption> {
+        let (effort_options, current_effort) =
+            self.session_reasoning_effort_state(session_id, state);
+        session_config::build_acp_reasoning_effort_option(&effort_options, current_effort)
+            .into_iter()
+            .collect()
     }
     /// Insert the per-session `_meta` keys shared by `new_session` and `load_session`.
     /// The keys are `x.ai/sessionConfig`, `x.ai/sessionDetail`, and `x.ai/schedulerBackgroundLoops`.
@@ -3903,8 +3935,9 @@ impl MvpAgent {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
     }
-    /// Switch the row on for the resident actor an attach reuses and ask it to fill it.
+    /// Switch the row on or off for the resident actor an attach reuses and ask it to fill occupancy.
     /// The store precedes the request because the emitter re-reads the capability when the wake lands.
+    /// Always request a snapshot: ACP `usage_update` is independent of the status row.
     pub(super) fn attach_status_line(
         &self,
         session_id: &acp::SessionId,
@@ -3916,9 +3949,7 @@ impl MvpAgent {
         };
         let wanted = Self::resolve_status_line_capability(meta, init);
         handle.set_status_line_wanted(wanted);
-        if wanted {
-            handle.request_status_snapshot();
-        }
+        handle.request_status_snapshot();
     }
     /// Extract per-client terminal/fs capabilities from request `_meta` (injected by the leader).
     /// Falls back to the shared `init` OnceCell.

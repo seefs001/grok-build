@@ -65,6 +65,13 @@ pub struct SamplerConfig {
 
     // Reasoning effort
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// When true, SuperGrok / cli-chat-proxy traffic sends `service_tier:
+    /// "priority"` (Fast). Stock default is false.
+    #[serde(default)]
+    pub fast: bool,
+    /// Responses `reasoning.summary`. `None` means concise (stock).
+    #[serde(default)]
+    pub reasoning_summary: Option<xai_grok_sampling_types::ReasoningSummary>,
 
     // Client identity
     pub origin_client: Option<OriginClientInfo>,
@@ -109,6 +116,18 @@ pub struct SamplerConfig {
     pub header_injector: Option<SharedHeaderInjector>,
 }
 
+impl SamplerConfig {
+    /// SuperGrok / session traffic is stamped with `X-XAI-Token-Auth:
+    /// xai-grok-cli` before the sampler is built. Fast (`service_tier:
+    /// "priority"`) is opt-in via [`Self::fast`], not implied by this header.
+    pub fn uses_subscription_proxy(&self) -> bool {
+        self.extra_headers.iter().any(|(name, value)| {
+            name.eq_ignore_ascii_case("x-xai-token-auth")
+                && value.eq_ignore_ascii_case("xai-grok-cli")
+        })
+    }
+}
+
 impl Default for SamplerConfig {
     /// Empty defaults so callers can use `..Default::default()` and new fields don't ripple through every literal site.
     fn default() -> Self {
@@ -131,6 +150,8 @@ impl Default for SamplerConfig {
             stream_tool_calls: false,
             idle_timeout_secs: None,
             reasoning_effort: None,
+            fast: false,
+            reasoning_summary: None,
             origin_client: None,
             client_identifier: None,
             deployment_id: None,
@@ -193,6 +214,25 @@ pub struct OriginClientInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subscription_proxy_detected_from_cli_token_auth_header() {
+        let mut cfg = SamplerConfig::default();
+        assert!(!cfg.uses_subscription_proxy());
+        cfg.extra_headers
+            .insert("X-XAI-Token-Auth".into(), "xai-grok-cli".into());
+        assert!(cfg.uses_subscription_proxy());
+    }
+
+    #[test]
+    fn retry_policy_defaults() {
+        let policy = RetryPolicy::default();
+        assert_eq!(policy.max_retries, DEFAULT_MAX_RETRIES);
+        assert_eq!(
+            policy.rate_limit_retry_threshold,
+            RATE_LIMIT_RETRY_THRESHOLD
+        );
+    }
 
     /// Configs serialized before the field existed must keep deserializing.
     #[test]

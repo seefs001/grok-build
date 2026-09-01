@@ -38,6 +38,11 @@ for the version of the code present in this tree.
 
 ---
 
+> **Fork.** This tree is [seefs001/grok-build](https://github.com/seefs001/grok-build),
+> not the upstream SpaceXAI repo. Delta vs
+> [xai-org/grok-build](https://github.com/xai-org/grok-build):
+> [`FORK_CHANGELOG.md`](FORK_CHANGELOG.md).
+
 ## Installing the released binary
 
 Prebuilt binaries are published for macOS, Linux, and Windows:

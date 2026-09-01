@@ -1427,6 +1427,161 @@ async fn a_routed_effort_id_resolves_back_to_its_entry() {
         "so a second application is idempotent rather than losing the entry",
     );
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn acp_set_config_option_routes_effort_id_to_sampling_variant() {
+    use crate::agent::config::{EndpointsConfig, ModelEntry, ModelVariant};
+    use crate::agent::session_config::REASONING_EFFORT_CONFIG_ID;
+    use acp::Agent as _;
+    use xai_grok_sampling_types::{ReasoningEffort, ReasoningEffortOption};
+
+    let local = tokio::task::LocalSet::new();
+    local
+        .run_until(async {
+            let agent = build_minimal_agent_for_tests();
+            let mut entry = ModelEntry::fallback("routed-high", &EndpointsConfig::default());
+            entry.info.supports_reasoning_effort = true;
+            entry.info.reasoning_effort = Some(ReasoningEffort::High);
+            entry.info.reasoning_efforts = vec![
+                ReasoningEffortOption {
+                    id: "high".to_string(),
+                    value: ReasoningEffort::High,
+                    label: "High".to_string(),
+                    description: None,
+                    default: true,
+                },
+                ReasoningEffortOption {
+                    id: "deep".to_string(),
+                    value: ReasoningEffort::Xhigh,
+                    label: "Deep".to_string(),
+                    description: None,
+                    default: false,
+                },
+            ];
+            entry.info.variants = vec![
+                ModelVariant {
+                    effort: ReasoningEffort::High,
+                    model_id: "routed-high".to_string(),
+                },
+                ModelVariant {
+                    effort: ReasoningEffort::Xhigh,
+                    model_id: "routed-deep".to_string(),
+                },
+            ];
+            agent.models_manager.insert_test_entry("routed-high", entry);
+
+            let session_id = acp::SessionId::new("standard-effort-sess");
+            let (mut handle, _cmd_tx, mut cmd_rx) = make_live_session_handle(&session_id, None);
+            handle.model_id = acp::ModelId::new("routed-high");
+            handle.reasoning_effort = Some(ReasoningEffort::High);
+            agent.insert_resident(&session_id, handle);
+
+            let actor = tokio::task::spawn_local(async move {
+                while let Some(command) = cmd_rx.recv().await {
+                    match command {
+                        TestSessionCommand::GetActiveAgent { responds_to } => {
+                            let _ = responds_to.send(None);
+                        }
+                        TestSessionCommand::SetSessionModel {
+                            sampling_config,
+                            responds_to,
+                            ..
+                        } => {
+                            assert_eq!(sampling_config.model, "routed-deep");
+                            assert_eq!(
+                                sampling_config.reasoning_effort,
+                                Some(ReasoningEffort::Xhigh)
+                            );
+                            let _ = responds_to.send(Ok(acp::ModelId::new("routed-deep")));
+                            break;
+                        }
+                        _ => panic!("unexpected session command"),
+                    }
+                }
+            });
+
+            let response = agent
+                .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
+                    session_id.clone(),
+                    REASONING_EFFORT_CONFIG_ID,
+                    "deep",
+                ))
+                .await
+                .expect("standard ACP effort switch");
+            actor.await.unwrap();
+
+            let handle = agent.resident_handle(&session_id).unwrap();
+            assert_eq!(handle.reasoning_effort, Some(ReasoningEffort::Xhigh));
+            let [option] = response.config_options.as_slice() else {
+                panic!("expected one reasoning-effort config option");
+            };
+            let acp::SessionConfigKind::Select(select) = &option.kind else {
+                panic!("reasoning effort must remain a select option");
+            };
+            assert_eq!(select.current_value.0.as_ref(), "deep");
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn acp_set_config_option_rejects_unknown_config_without_mutation() {
+    use acp::Agent as _;
+    let agent = build_minimal_agent_for_tests();
+    let err = agent
+        .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
+            acp::SessionId::new("missing"),
+            "unknown",
+            "deep",
+        ))
+        .await
+        .expect_err("unknown standard config id");
+    assert_eq!(err.code, acp::Error::invalid_params().code);
+}
+
+#[tokio::test]
+async fn acp_set_config_option_rejects_effort_for_unsupported_model() {
+    use crate::agent::config::{EndpointsConfig, ModelEntry};
+    use crate::agent::session_config::REASONING_EFFORT_CONFIG_ID;
+    use acp::Agent as _;
+
+    let agent = build_minimal_agent_for_tests();
+    agent.models_manager.insert_test_entry(
+        "plain-model",
+        ModelEntry::fallback("plain-model", &EndpointsConfig::default()),
+    );
+    let session_id = acp::SessionId::new("plain-model-sess");
+    let mut handle = make_test_handle("plain-model", false, None);
+    handle.info.id = session_id.clone();
+    agent.insert_resident(&session_id, handle);
+    let err = agent
+        .set_session_config_option(acp::SetSessionConfigOptionRequest::new(
+            session_id,
+            REASONING_EFFORT_CONFIG_ID,
+            "high",
+        ))
+        .await
+        .expect_err("plain model must reject reasoning effort");
+    assert_eq!(err.code, acp::Error::invalid_params().code);
+}
+
+#[tokio::test]
+async fn prepare_sampling_config_stamps_reasoning_summary_and_models_fast() {
+    use crate::agent::config::{EndpointsConfig, ModelEntry};
+    use xai_grok_sampling_types::ReasoningSummary;
+    let agent = build_minimal_agent_for_tests();
+    let model = ModelEntry::fallback("test-model", &EndpointsConfig::default());
+    let stock = agent.prepare_sampling_config_for_model(&model, None);
+    assert!(!stock.fast);
+    assert_eq!(stock.reasoning_summary, None);
+    agent.cfg.borrow_mut().models.fast = Some(true);
+    agent.cfg.borrow_mut().models.reasoning_summary = Some(ReasoningSummary::Detailed);
+    let cfg = agent.prepare_sampling_config_for_model(&model, None);
+    assert!(
+        cfg.fast,
+        "models.fast must stamp SamplerConfig.fast for subscription Fast"
+    );
+    assert_eq!(cfg.reasoning_summary, Some(ReasoningSummary::Detailed));
+}
 #[test]
 fn resolve_new_session_effort_hint_prefers_meta_over_current() {
     use crate::agent::mvp_agent::reasoning_effort::resolve_new_session_effort_hint;
@@ -6872,8 +7027,11 @@ async fn an_attach_that_draws_a_row_switches_it_on_and_asks_for_a_fill() {
         "an attach that cannot draw a row switched it on"
     );
     assert!(
-        commands.try_recv().is_err(),
-        "an attach that cannot draw a row asked the actor to build one"
+        matches!(
+            commands.try_recv(),
+            Ok(crate::session::SessionCommand::EmitStatusSnapshot)
+        ),
+        "an attach that cannot draw a row still asks for occupancy so usage_update reaches it"
     );
     agent.attach_status_line(&session_id, Some(&status_line_meta(true)), &init);
     assert!(

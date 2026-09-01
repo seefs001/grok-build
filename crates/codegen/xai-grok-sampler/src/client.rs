@@ -353,6 +353,9 @@ struct ClientDefaults {
     stream_tool_calls: bool,
     extra_response_includes: Vec<String>,
     doom_loop_recovery: Option<xai_grok_sampling_types::DoomLoopRecoveryPolicy>,
+    /// Session Fast: SuperGrok / cli-chat-proxy stamps `service_tier: priority`.
+    fast: bool,
+    reasoning_summary: xai_grok_sampling_types::ReasoningSummary,
 }
 
 /// Endpoint URL builder, resolved once at client construction so each request only appends its path.
@@ -637,6 +640,10 @@ impl SamplingClient {
             has_x_api_key_header = headers.get(HeaderName::from_static("x-api-key")).is_some(),
         );
 
+        let fast = config.fast && config.uses_subscription_proxy();
+        let reasoning_summary = config
+            .reasoning_summary
+            .unwrap_or(xai_grok_sampling_types::ReasoningSummary::Concise);
         let defaults = ClientDefaults {
             model: config.model,
             max_completion_tokens: config.max_completion_tokens,
@@ -647,6 +654,8 @@ impl SamplingClient {
             stream_tool_calls: config.stream_tool_calls,
             extra_response_includes: config.extra_response_includes,
             doom_loop_recovery: config.doom_loop_recovery,
+            fast,
+            reasoning_summary,
         };
 
         let endpoint = EndpointTemplate::new(&config.base_url, &config.query_params);
@@ -1141,6 +1150,13 @@ impl SamplingClient {
         let includes = request.inner.include.get_or_insert_with(Vec::new);
         if !includes.contains(&rs::IncludeEnum::ReasoningEncryptedContent) {
             includes.push(rs::IncludeEnum::ReasoningEncryptedContent);
+        }
+
+        // Fast: Grok 4.6 has no `*-fast` model id. Session Fast
+        // (`SamplerConfig.fast`) on the subscription proxy sends
+        // `service_tier: "priority"`. Default is unset (no field).
+        if request.inner.service_tier.is_none() && self.defaults.fast {
+            request.inner.service_tier = Some(rs::ServiceTier::Priority);
         }
 
         Ok(())
@@ -1787,6 +1803,14 @@ impl SamplingClient {
             request.max_output_tokens = self.defaults.max_completion_tokens;
         }
 
+        if request.reasoning_summary.is_none() {
+            request.reasoning_summary = Some(self.defaults.reasoning_summary);
+        }
+
+        if request.service_tier.is_none() && self.defaults.fast {
+            request.service_tier = Some(xai_grok_sampling_types::ServiceTier::Priority);
+        }
+
         Ok(())
     }
 
@@ -2148,6 +2172,99 @@ mod tests {
         );
     }
 
+    fn subscription_proxy_config() -> SamplerConfig {
+        let mut cfg = minimal_config();
+        cfg.extra_headers
+            .insert("X-XAI-Token-Auth".into(), "xai-grok-cli".into());
+        cfg.fast = true;
+        cfg
+    }
+
+    #[test]
+    fn subscription_proxy_defaults_responses_to_priority_tier() {
+        let client = SamplingClient::new(subscription_proxy_config()).expect("client");
+        let mut wrapper = CreateResponseWrapper::default();
+        client
+            .apply_response_defaults(&mut wrapper)
+            .expect("defaults apply");
+        assert_eq!(wrapper.inner.service_tier, Some(rs::ServiceTier::Priority));
+    }
+
+    #[test]
+    fn subscription_proxy_without_fast_leaves_service_tier_unset() {
+        let mut cfg = subscription_proxy_config();
+        cfg.fast = false;
+        let client = SamplingClient::new(cfg).expect("client");
+        let mut wrapper = CreateResponseWrapper::default();
+        client
+            .apply_response_defaults(&mut wrapper)
+            .expect("defaults apply");
+        assert_eq!(wrapper.inner.service_tier, None);
+    }
+
+    #[test]
+    fn api_key_path_leaves_service_tier_unset() {
+        let client = SamplingClient::new(minimal_config()).expect("client");
+        let mut wrapper = CreateResponseWrapper::default();
+        client
+            .apply_response_defaults(&mut wrapper)
+            .expect("defaults apply");
+        assert_eq!(wrapper.inner.service_tier, None);
+    }
+
+    #[test]
+    fn explicit_service_tier_is_not_overwritten_on_subscription() {
+        let client = SamplingClient::new(subscription_proxy_config()).expect("client");
+        let mut wrapper = CreateResponseWrapper::default();
+        wrapper.inner.service_tier = Some(rs::ServiceTier::Default);
+        client
+            .apply_response_defaults(&mut wrapper)
+            .expect("defaults apply");
+        assert_eq!(wrapper.inner.service_tier, Some(rs::ServiceTier::Default));
+    }
+
+    #[test]
+    fn subscription_proxy_stamps_conversation_request_priority_tier() {
+        let client = SamplingClient::new(subscription_proxy_config()).expect("client");
+        let mut request = ConversationRequest::default();
+        client
+            .apply_conversation_defaults(&mut request)
+            .expect("defaults apply");
+        assert_eq!(
+            request.service_tier,
+            Some(xai_grok_sampling_types::ServiceTier::Priority)
+        );
+    }
+
+    #[test]
+    fn reasoning_summary_from_config_stamps_conversation_request() {
+        let mut cfg = minimal_config();
+        cfg.reasoning_summary = Some(xai_grok_sampling_types::ReasoningSummary::Detailed);
+        let client = SamplingClient::new(cfg).expect("client");
+        let mut request = ConversationRequest::default();
+        client
+            .apply_conversation_defaults(&mut request)
+            .expect("defaults apply");
+        assert_eq!(
+            request.reasoning_summary,
+            Some(xai_grok_sampling_types::ReasoningSummary::Detailed)
+        );
+    }
+
+    #[test]
+    fn stock_defaults_leave_service_tier_unset_and_summary_concise() {
+        let client = SamplingClient::new(minimal_config()).expect("client");
+        let mut request = ConversationRequest::default();
+        client
+            .apply_conversation_defaults(&mut request)
+            .expect("defaults apply");
+        assert_eq!(request.service_tier, None);
+        assert_eq!(
+            request.reasoning_summary,
+            Some(xai_grok_sampling_types::ReasoningSummary::Concise)
+        );
+    }
+
     fn minimal_config() -> SamplerConfig {
         SamplerConfig {
             api_key: Some("test-key".to_string()),
@@ -2168,6 +2285,8 @@ mod tests {
             stream_tool_calls: false,
             idle_timeout_secs: None,
             reasoning_effort: None,
+            fast: false,
+            reasoning_summary: None,
             origin_client: None,
             client_identifier: None,
             deployment_id: None,

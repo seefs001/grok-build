@@ -1113,6 +1113,14 @@ fn sampling_config_uses_model_api_key_over_fallback() {
         Some("model-specific-key".to_string())
     );
     assert_eq!(sampling_config.base_url, "https://test.api/v1");
+    assert!(
+        !sampling_config.fast,
+        "stock sampling_config_for_model must not enable Fast"
+    );
+    assert_eq!(
+        sampling_config.reasoning_summary, None,
+        "stock sampling_config_for_model must leave reasoning.summary unset (concise)"
+    );
 }
 #[test]
 fn sampling_config_uses_fallback_when_no_model_api_key() {

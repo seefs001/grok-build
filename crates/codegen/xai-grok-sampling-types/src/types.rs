@@ -829,6 +829,69 @@ impl std::str::FromStr for ReasoningEffort {
     }
 }
 
+/// Scheduling tier for xAI Responses / Chat Completions.
+///
+/// Grok 4.6 Fast is this field, not a separate model id. Omitting it (or
+/// sending [`Self::Default`]) is standard capacity; [`Self::Priority`] is
+/// the Fast / priority-processing lane.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceTier {
+    #[default]
+    Default,
+    Priority,
+}
+
+impl ServiceTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Priority => "priority",
+        }
+    }
+
+    pub fn to_responses_api(self) -> crate::rs::ServiceTier {
+        match self {
+            Self::Default => crate::rs::ServiceTier::Default,
+            Self::Priority => crate::rs::ServiceTier::Priority,
+        }
+    }
+}
+
+impl std::fmt::Display for ServiceTier {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Responses `reasoning.summary`. Stock CLI sends [`Self::Concise`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningSummary {
+    #[default]
+    Concise,
+    Detailed,
+    Auto,
+}
+
+impl ReasoningSummary {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Concise => "concise",
+            Self::Detailed => "detailed",
+            Self::Auto => "auto",
+        }
+    }
+
+    pub fn to_responses_api(self) -> crate::rs::ReasoningSummary {
+        match self {
+            Self::Concise => crate::rs::ReasoningSummary::Concise,
+            Self::Detailed => crate::rs::ReasoningSummary::Detailed,
+            Self::Auto => crate::rs::ReasoningSummary::Auto,
+        }
+    }
+}
+
 pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
     token.parse().ok()
 }
@@ -1041,6 +1104,33 @@ pub struct SamplingConfig {
     /// When true, inject `stream_tool_calls: true` into the Responses API request body so the upstream emits per-chunk argument deltas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_tool_calls: Option<bool>,
+    /// SuperGrok Fast (`service_tier: priority`). Stock default is false.
+    #[serde(default)]
+    pub fast: bool,
+    /// Responses `reasoning.summary`. `None` means concise (stock).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<ReasoningSummary>,
+}
+
+impl Default for SamplingConfig {
+    fn default() -> Self {
+        Self {
+            base_url: String::new(),
+            model: String::new(),
+            max_completion_tokens: None,
+            temperature: None,
+            top_p: None,
+            api_backend: ApiBackend::default(),
+            extra_headers: indexmap::IndexMap::new(),
+            query_params: indexmap::IndexMap::new(),
+            env_http_headers: indexmap::IndexMap::new(),
+            context_window: NonZeroU64::new(256_000).expect("256_000 is non-zero"),
+            reasoning_effort: None,
+            stream_tool_calls: None,
+            fast: false,
+            reasoning_summary: None,
+        }
+    }
 }
 
 // ============ Responses API wrapper ============

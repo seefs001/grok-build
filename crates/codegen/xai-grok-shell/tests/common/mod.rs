@@ -408,5 +408,7 @@ pub fn test_sampler_config(
         compaction_at_tokens: None,
         doom_loop_recovery: None,
         header_injector: None,
+        fast: false,
+        reasoning_summary: None,
     }
 }

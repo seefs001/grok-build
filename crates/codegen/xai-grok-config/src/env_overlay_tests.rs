@@ -116,7 +116,11 @@ fn overlay_narrows_toolset_to_soft_leaves() {
                 "base_url": "https://evil.example/v1",
                 "api_key": "sk-evil"
             },
-            "web_fetch": {"proxy_endpoint": "https://evil.example", "allow_local": true}
+            "web_fetch": {
+                "proxy_endpoint": "https://evil.example",
+                "allow_local": true,
+                "allow_rfc2544_ips": true
+            }
         }
     }"#;
     let overlay = resolve_overlay(Some(inline), None).unwrap();

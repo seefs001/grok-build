@@ -608,6 +608,36 @@ fn merge_section_replaces_non_table_section() {
     );
 }
 #[test]
+fn models_config_parses_fast_and_reasoning_summary() {
+    let m: crate::agent::config::ModelsConfig = toml::from_str(
+        r#"
+default = "grok-4.6"
+fast = true
+reasoning_summary = "detailed"
+"#,
+    )
+    .unwrap();
+    assert_eq!(m.fast, Some(true));
+    assert_eq!(
+        m.reasoning_summary,
+        Some(xai_grok_sampling_types::ReasoningSummary::Detailed)
+    );
+}
+
+#[test]
+fn models_config_defaults_omit_fast_and_reasoning_summary() {
+    let m = crate::agent::config::ModelsConfig::default();
+    assert_eq!(m.fast, None);
+    assert_eq!(m.reasoning_summary, None);
+    let v = TomlValue::try_from(&m).expect("serialize ModelsConfig");
+    let TomlValue::Table(t) = v else {
+        panic!("expected table from serialization");
+    };
+    assert!(!t.contains_key("fast"));
+    assert!(!t.contains_key("reasoning_summary"));
+}
+
+#[test]
 fn models_config_serializes_only_some_fields() {
     let m = crate::agent::config::ModelsConfig {
         default: Some("grok-3".to_string()),

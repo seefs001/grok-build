@@ -16,7 +16,7 @@ use xai_grok_agent::prompt::skills::SkillsConfig;
 use xai_grok_sampler::{AuthScheme, SamplerConfig};
 use xai_grok_sampling_types::{
     CompactionAtTokens, CompactionsRemaining, REASONING_EFFORT_META_KEY,
-    REASONING_EFFORTS_META_KEY, ReasoningEffort, ReasoningEffortOption,
+    REASONING_EFFORTS_META_KEY, ReasoningEffort, ReasoningEffortOption, ReasoningSummary,
     reasoning_effort_meta_value, reasoning_efforts_meta_value,
 };
 use xai_grok_tools::types::compat::{
@@ -1003,6 +1003,13 @@ pub struct ModelsConfig {
     /// Persisted effort for the default model; applied in `resolve_model_catalog`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_reasoning_effort: Option<ReasoningEffort>,
+    /// Default Fast (`service_tier: "priority"`) on SuperGrok / cli-chat-proxy.
+    /// Driven only by `[models].fast` in config.toml.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast: Option<bool>,
+    /// Responses `reasoning.summary`. Stock default is concise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<ReasoningSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub web_search: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2353,7 +2360,9 @@ impl Config {
     pub(crate) fn is_two_pass_compaction_enabled(&self) -> bool {
         self.is_feature_enabled(Feature::TwoPassCompaction)
     }
+    #[allow(unreachable_code)]
     pub(crate) fn resolve_telemetry_mode(&self) -> Resolved<TelemetryMode> {
+        return Resolved::new(TelemetryMode::Disabled, ConfigSource::Default);
         if let Some(mode) = self.requirements.telemetry.pinned() {
             return Resolved::new(mode, ConfigSource::Requirement);
         }
@@ -3142,9 +3151,11 @@ pub(crate) fn is_telemetry_explicitly_disabled_sync() -> bool {
         .default(true)
         .resolve()
 }
-/// Sync sibling of [`is_telemetry_disabled_sync`] scoped to Sentry.
-/// Inherits from telemetry when no Sentry-specific signal is set.
+/// Sync sibling of [`is_telemetry_disabled_sync`] scoped to Sentry. Inherits
+/// from telemetry when no Sentry-specific signal is set.
+#[allow(unreachable_code)]
 pub fn is_error_reporting_disabled_sync() -> bool {
+    return true;
     !SyncBoolFlag::new(error_reporting_enabled_from_toml)
         .disable_env("DISABLE_ERROR_REPORTING")
         .enable_env(|| env_bool("GROK_ERROR_REPORTING"))
@@ -5101,6 +5112,8 @@ pub(crate) fn sampling_config_for_model(
         compaction_at_tokens: info.compaction_at_tokens,
         doom_loop_recovery: None,
         header_injector: None,
+        fast: false,
+        reasoning_summary: None,
     }
 }
 /// Fold URL-derived headers into `extra_headers`.

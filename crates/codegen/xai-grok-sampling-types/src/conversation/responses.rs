@@ -140,10 +140,14 @@ impl From<&ConversationRequest> for rs::CreateResponse {
             prompt_cache_retention: None,
             reasoning: Some(rs::Reasoning {
                 effort: req.reasoning_effort.map(|e| e.to_responses_api()),
-                summary: Some(rs::ReasoningSummary::Concise),
+                summary: Some(
+                    req.reasoning_summary
+                        .unwrap_or(crate::ReasoningSummary::Concise)
+                        .to_responses_api(),
+                ),
             }),
             safety_identifier: None,
-            service_tier: None,
+            service_tier: req.service_tier.map(crate::ServiceTier::to_responses_api),
             store: None,
             stream: None,
             stream_options: None,

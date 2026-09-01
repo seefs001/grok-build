@@ -99,6 +99,10 @@ pub struct WebFetchToolConfig {
     /// Private and metadata ranges stay blocked.
     /// Resolution: TOML > `GROK_WEB_FETCH_ALLOW_LOCAL` env > false.
     pub allow_local: Option<bool>,
+    /// Allow RFC 2544 benchmarking addresses (`198.18.0.0/15`), commonly used
+    /// by local Fake IP proxies. Other non-public ranges stay blocked. Default
+    /// off; configurable only from trusted TOML layers.
+    pub allow_rfc2544_ips: Option<bool>,
 }
 
 impl WebFetchToolConfig {
@@ -136,6 +140,7 @@ impl WebFetchToolConfig {
             allowed_domains,
             context_window_tokens,
             allow_local,
+            allow_rfc2544_ips: self.allow_rfc2544_ips,
             ..Default::default()
         }
     }
@@ -219,6 +224,8 @@ impl ShellToolsetConfig {
             compaction_at_tokens: None,
             doom_loop_recovery: None,
             header_injector: None,
+            fast: false,
+            reasoning_summary: None,
         };
         let mut toolset = base.unwrap_or_else(|| Self {
             bash: BashToolConfig::default(),
@@ -540,6 +547,7 @@ mod tests {
             proxy_endpoint: Some("https://toml-proxy.example.com".to_owned()),
             allowed_domains: Some(vec!["toml.example.com".to_owned()]),
             allow_local: Some(true),
+            allow_rfc2544_ips: Some(true),
         };
         let params = local.resolve_params(
             Some("https://remote-proxy.example.com"),
@@ -556,6 +564,7 @@ mod tests {
         );
         assert_eq!(params.allow_local, Some(true));
         assert!(params.allow_local());
+        assert!(params.allow_rfc2544_ips());
     }
 
     #[test]
@@ -584,6 +593,7 @@ mod tests {
         assert!(params.proxy_endpoint.is_none());
         assert!(params.allowed_domains.is_none());
         assert!(!params.allow_local());
+        assert!(!params.allow_rfc2544_ips());
     }
 
     #[test]
@@ -592,6 +602,7 @@ mod tests {
             proxy_endpoint: None,
             allowed_domains: Some(vec![]),
             allow_local: None,
+            allow_rfc2544_ips: None,
         };
         let params = local.resolve_params(None, Some(&["remote.example.com".to_owned()]), None);
         assert_eq!(params.allowed_domains, Some(vec![]));

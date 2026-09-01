@@ -95,7 +95,12 @@ impl WebFetchClient {
         }
 
         // SSRF check (policy from tool params — not process env at call time).
-        ssrf::check_ssrf(&url, self.params.allow_local()).await?;
+        ssrf::check_ssrf(
+            &url,
+            self.params.allow_local(),
+            self.params.allow_rfc2544_ips(),
+        )
+        .await?;
 
         // Make request and build output.
         let http = self.http.get_or_rebuild()?;
@@ -104,6 +109,7 @@ impl WebFetchClient {
             &url,
             self.params.max_content_length(),
             self.params.allow_local(),
+            self.params.allow_rfc2544_ips(),
         )
         .await
         {
@@ -363,6 +369,7 @@ async fn fetch_url(
     url: &Url,
     max_content_length: usize,
     allow_local: bool,
+    allow_rfc2544_ips: bool,
 ) -> Result<FetchResult, WebFetchError> {
     let mut current_url = url.clone();
     let mut hops = 0;
@@ -371,7 +378,7 @@ async fn fetch_url(
     loop {
         // Re-check on every hop (including the first) so a rebinding name that
         // was public at the pre-fetch check cannot become loopback/private here.
-        ssrf::check_ssrf(&current_url, allow_local).await?;
+        ssrf::check_ssrf(&current_url, allow_local, allow_rfc2544_ips).await?;
 
         let resp = client
             .get(current_url.as_str())

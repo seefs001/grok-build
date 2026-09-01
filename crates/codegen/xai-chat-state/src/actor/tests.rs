@@ -31,6 +31,8 @@ fn test_config_with_window(context_window: u64) -> SamplingConfig {
             .expect("test context_window must be non-zero"),
         reasoning_effort: None,
         stream_tool_calls: None,
+        fast: false,
+        reasoning_summary: None,
     }
 }
 
@@ -1382,6 +1384,8 @@ async fn update_sampling_config_is_queryable() {
         context_window: NonZeroU64::new(200_000).unwrap(),
         reasoning_effort: None,
         stream_tool_calls: None,
+        fast: false,
+        reasoning_summary: None,
     };
     h.handle.update_sampling_config(new_config.clone());
 
@@ -1797,6 +1801,8 @@ async fn build_request_uses_sampling_config() {
         context_window: NonZeroU64::new(128_000).unwrap(),
         reasoning_effort: None,
         stream_tool_calls: None,
+        fast: false,
+        reasoning_summary: None,
     };
     let h = TestHarness::with_config(vec![ConversationItem::user("hi")], config);
 
@@ -1810,6 +1816,26 @@ async fn build_request_uses_sampling_config() {
     assert_eq!(request.temperature, Some(0.7));
     assert_eq!(request.max_output_tokens, Some(8192));
     assert_eq!(request.top_p, Some(0.9));
+    assert_eq!(request.reasoning_summary, None);
+    assert_eq!(request.service_tier, None);
+}
+
+#[tokio::test]
+async fn build_request_copies_reasoning_summary_from_sampling_config() {
+    let config = SamplingConfig {
+        reasoning_summary: Some(xai_grok_sampling_types::ReasoningSummary::Detailed),
+        ..test_config()
+    };
+    let h = TestHarness::with_config(vec![ConversationItem::user("hi")], config);
+    let request = h
+        .handle
+        .build_request(vec![], None, false, None, "c".into(), "r".into())
+        .await
+        .unwrap();
+    assert_eq!(
+        request.reasoning_summary,
+        Some(xai_grok_sampling_types::ReasoningSummary::Detailed)
+    );
 }
 
 #[tokio::test]
@@ -4350,6 +4376,8 @@ async fn sampling_config_survives_compaction_replacement() {
         context_window: NonZeroU64::new(500_000).unwrap(),
         reasoning_effort: None,
         stream_tool_calls: None,
+        fast: false,
+        reasoning_summary: None,
     };
 
     let h = TestHarness::with_config(
@@ -4435,6 +4463,8 @@ async fn model_metadata_lost_after_compaction_then_recovered_on_next_turn() {
         context_window: NonZeroU64::new(500_000).unwrap(),
         reasoning_effort: None,
         stream_tool_calls: None,
+        fast: false,
+        reasoning_summary: None,
     };
 
     let h = TestHarness::with_config(
@@ -4525,6 +4555,8 @@ async fn context_window_downgrade_triggers_auto_compact() {
         context_window: NonZeroU64::new(500_000).unwrap(),
         reasoning_effort: None,
         stream_tool_calls: None,
+        fast: false,
+        reasoning_summary: None,
     };
 
     let h = TestHarness::with_config(vec![], config);
