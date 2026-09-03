@@ -13,8 +13,8 @@ and [x.ai/build/changelog](https://x.ai/build/changelog).
 | --- | --- |
 | Upstream | https://github.com/xai-org/grok-build |
 | Fork | https://github.com/seefs001/grok-build |
-| Based on | `bb7f39d5` (“Synced from monorepo”) |
-| `SOURCE_REV` | `d761e8ba538084df023de79d26892eaf73ed7411` |
+| Based on | `72a61251` (“Synced from monorepo”) |
+| `SOURCE_REV` | `a549186d9d39311f2d3ee4208db62af8c65aa476` |
 | Date | 2026-09-01 |
 
 ## Remotes
@@ -43,10 +43,11 @@ git merge upstream/main
 - **Reasoning summary** via `[models].reasoning_summary` (`concise` /
   `detailed` / `auto`). Stock CLI always sent `concise`; that remains the
   default when the key is unset.
-- **ACP session config** exposes reasoning effort as a `thought_level` select
-  (`config_id = reasoning_effort`) on `new_session` / `load_session`, and
-  implements `session/set_config_option` to switch it through the existing
-  `set_session_model` meta path.
+- **ACP session config** now comes from upstream (1.0.14–1.0.16): `new_session`
+  / `load_session` advertise both a `model` select and a `thought_level`
+  `reasoning_effort` select; `session/set_config_option` is handled by
+  `handlers/config_option.rs`. The fork no longer carries a private
+  effort-only implementation.
 - **ACP `usage_update`**. Occupancy (used / window size) and optional USD cost
   are emitted as a live-only `session/update` with `sessionUpdate:
   "usage_update"`. It is independent of the status-row capability: clients
