@@ -484,7 +484,7 @@ pub struct ChatResponseMessage {
     pub role: Role,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "reasoning", skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCallResponse>,
@@ -623,6 +623,7 @@ pub struct ChatChunkDelta {
     pub role: Option<Role>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(alias = "reasoning")]
     pub reasoning_content: Option<String>,
     /// A JSON `null` deserializes as an empty vec.
     #[serde(
@@ -1514,6 +1515,36 @@ mod tests {
             match &blocks[0] {
                 ChatContentBlock::Text { text } => assert_eq!(text, expected_content),
                 _ => panic!("Expected empty Text block"),
+            }
+        }
+    }
+
+    #[test]
+    fn chat_reasoning_fields_deserialize_and_keep_canonical_wire_name() {
+        for field in ["reasoning_content", "reasoning"] {
+            for value in [serde_json::json!("thinking..."), Value::Null] {
+                let mut wire = serde_json::json!({"role": "assistant", "content": "answer"});
+                wire[field] = value.clone();
+                let delta: ChatChunkDelta = serde_json::from_value(wire.clone()).unwrap();
+                let message: ChatResponseMessage = serde_json::from_value(wire).unwrap();
+
+                assert_eq!(
+                    delta.reasoning_content.as_deref(),
+                    value.as_str(),
+                    "{field}"
+                );
+                assert_eq!(
+                    message.reasoning_content.as_deref(),
+                    value.as_str(),
+                    "{field}"
+                );
+                for encoded in [
+                    serde_json::to_value(delta).unwrap(),
+                    serde_json::to_value(message).unwrap(),
+                ] {
+                    assert!(encoded.get("reasoning").is_none());
+                    assert_eq!(encoded["reasoning_content"], value);
+                }
             }
         }
     }
