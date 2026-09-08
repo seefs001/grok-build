@@ -106,10 +106,8 @@ fn is_non_public_ipv6(ip: Ipv6Addr) -> bool {
         || ip.is_unicast_link_local()
 }
 
-/// Loopback including IPv4-mapped forms (`::ffff:127.0.0.1`).
-///
-/// `IpAddr::is_loopback` is false for mapped addresses even when the embedded
-/// v4 is loopback, so local opt-in must use this helper.
+/// Loopback including IPv4-mapped forms (`::ffff:127.0.0.1`). `IpAddr::is_loopback` is false for
+/// mapped addresses even when the embedded v4 is loopback, so local opt-in must use this helper.
 fn is_loopback_addr(ip: IpAddr) -> bool {
     if ip.is_loopback() {
         return true;

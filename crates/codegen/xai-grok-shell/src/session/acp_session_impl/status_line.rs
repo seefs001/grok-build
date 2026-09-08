@@ -107,7 +107,6 @@ fn build_context_window(
 
 /// The turn in flight, `None` between turns.
 /// Chat state keeps the start stamp after a turn ends because the laziness classifier reads it.
-/// So the stamp alone would report a turn that finished.
 /// The prompt id is what a guard clears when the turn does.
 fn live_turn(started_at_ms: Option<i64>, prompt_id: Option<&str>) -> Option<StatusLineTurn> {
     started_at_ms

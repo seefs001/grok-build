@@ -13,9 +13,9 @@ and [x.ai/build/changelog](https://x.ai/build/changelog).
 | --- | --- |
 | Upstream | https://github.com/xai-org/grok-build |
 | Fork | https://github.com/seefs001/grok-build |
-| Based on | `72a61251` (“Synced from monorepo”) |
-| `SOURCE_REV` | `a549186d9d39311f2d3ee4208db62af8c65aa476` |
-| Date | 2026-09-01 |
+| Based on | `75810042` (“Synced from monorepo”, 1.0.24) |
+| `SOURCE_REV` | `eb4a894da8fb7bcd8d8f398a9d909a7868a4fcf1` |
+| Date | 2026-09-08 |
 
 ## Remotes
 
