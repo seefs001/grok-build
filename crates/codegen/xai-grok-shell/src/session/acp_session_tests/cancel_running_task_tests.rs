@@ -157,6 +157,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                     persistence_tx: persistence.tx.clone(),
                     disk_full: persistence.subscribe_disk_full(),
+                    client_caps: crate::session::notifications::SessionClientCaps::new(false, true),
                 },
                 permissions: PermissionHandle::allow_all(),
                 tool_context,
@@ -202,6 +203,8 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                     cancel: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
+                    configured_mode: None,
+                    configured_storage: None,
                     flush_config: crate::config::MemoryFlushConfig::default(),
                     is_flushing: std::sync::atomic::AtomicBool::new(false),
                     last_flush_compaction: std::sync::atomic::AtomicU64::new(0),
@@ -252,6 +255,7 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 queue_exit_reminder_on_approved_exit: Arc::new(std::sync::atomic::AtomicBool::new(
                     false,
                 )),
+                emit_local_background_tasks: Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 active_skill: parking_lot::Mutex::new(None),
                 plan_mode: Arc::new(parking_lot::Mutex::new(
                     crate::session::plan_mode::PlanModeTracker::new(std::path::PathBuf::from(
@@ -305,12 +309,15 @@ async fn persist_ack_waits_for_disk_flush_before_success() {
                 deferred_prefix: DeferredPrefix::new(),
                 mcp_startup_waits: Default::default(),
                 mcp_init_tasks: Default::default(),
+                weak_self: std::sync::Weak::new(),
+                startup_tasks: Default::default(),
                 extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
                 last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
                 prefix_carries_fallback_date: std::cell::Cell::new(false),
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                hook_disabled: Default::default(),
                 turn_report: Default::default(),
                 turn_abort: Default::default(),
                 turn_end_tx: Default::default(),
@@ -771,6 +778,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     gateway_enabled: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
                     persistence_tx: persistence.tx.clone(),
                     disk_full: persistence.subscribe_disk_full(),
+                    client_caps: crate::session::notifications::SessionClientCaps::new(false, true),
                 },
                 permissions: PermissionHandle::allow_all(),
                 tool_context,
@@ -816,6 +824,8 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                     cancel: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
+                    configured_mode: Some(crate::config::MemoryMode::Legacy),
+                    configured_storage: None,
                     flush_config: crate::config::MemoryFlushConfig::default(),
                     is_flushing: std::sync::atomic::AtomicBool::new(false),
                     last_flush_compaction: std::sync::atomic::AtomicU64::new(0),
@@ -869,6 +879,7 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 queue_exit_reminder_on_approved_exit: Arc::new(std::sync::atomic::AtomicBool::new(
                     false,
                 )),
+                emit_local_background_tasks: Arc::new(std::sync::atomic::AtomicBool::new(true)),
                 active_skill: parking_lot::Mutex::new(None),
                 plan_mode: Arc::new(parking_lot::Mutex::new(
                     crate::session::plan_mode::PlanModeTracker::new(std::path::PathBuf::from(
@@ -922,12 +933,15 @@ async fn first_turn_memory_injection_disabled_does_not_persist_to_chat_history()
                 deferred_prefix: DeferredPrefix::new(),
                 mcp_startup_waits: Default::default(),
                 mcp_init_tasks: Default::default(),
+                weak_self: std::sync::Weak::new(),
+                startup_tasks: Default::default(),
                 extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
                 last_announced_local_date: std::cell::Cell::new(chrono::Local::now().date_naive()),
                 prefix_carries_fallback_date: std::cell::Cell::new(false),
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                hook_disabled: Default::default(),
                 turn_report: Default::default(),
                 turn_abort: Default::default(),
                 turn_end_tx: Default::default(),
@@ -1084,14 +1098,10 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 auth_manager: None,
                 is_chat_kind: false,
                 state,
-                notifications: NotificationSender {
-                    gateway: GatewaySender::new(gateway_tx),
-                    gateway_enabled: std::sync::Arc::new(
-                        std::sync::atomic::AtomicBool::new(true),
-                    ),
+                notifications: NotificationSender::for_tests(
+                    GatewaySender::new(gateway_tx),
                     persistence_tx,
-                    disk_full: crate::session::notifications::idle_disk_full_rx(),
-                },
+                ),
                 permissions: PermissionHandle::allow_all(),
                 tool_context,
                 deny_read_globs: Vec::new(),
@@ -1144,6 +1154,8 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                     cancel: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
+                    configured_mode: None,
+                    configured_storage: None,
                     flush_config: crate::config::MemoryFlushConfig::default(),
                     is_flushing: std::sync::atomic::AtomicBool::new(false),
                     last_flush_compaction: std::sync::atomic::AtomicU64::new(0),
@@ -1197,6 +1209,9 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 active_agent_type: parking_lot::Mutex::new(None),
                 queue_exit_reminder_on_approved_exit: Arc::new(
                     std::sync::atomic::AtomicBool::new(false),
+                ),
+                emit_local_background_tasks: Arc::new(
+                    std::sync::atomic::AtomicBool::new(true),
                 ),
                 active_skill: parking_lot::Mutex::new(None),
                 plan_mode: Arc::new(
@@ -1260,6 +1275,8 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 deferred_prefix: DeferredPrefix::new(),
                 mcp_startup_waits: Default::default(),
                 mcp_init_tasks: Default::default(),
+                weak_self: std::sync::Weak::new(),
+                startup_tasks: Default::default(),
                 extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
                 last_announced_local_date: std::cell::Cell::new(
                     chrono::Local::now().date_naive(),
@@ -1268,6 +1285,7 @@ async fn cancel_running_task_teardown_clears_running_and_pending_work() {
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                hook_disabled: Default::default(),
                 turn_report: Default::default(),
                 turn_abort: Default::default(),
                 turn_end_tx: Default::default(),
@@ -2663,14 +2681,10 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 auth_manager: None,
                 is_chat_kind: false,
                 state,
-                notifications: NotificationSender {
-                    gateway: GatewaySender::new(gateway_tx),
-                    gateway_enabled: std::sync::Arc::new(
-                        std::sync::atomic::AtomicBool::new(true),
-                    ),
+                notifications: NotificationSender::for_tests(
+                    GatewaySender::new(gateway_tx),
                     persistence_tx,
-                    disk_full: crate::session::notifications::idle_disk_full_rx(),
-                },
+                ),
                 permissions: PermissionHandle::allow_all(),
                 tool_context,
                 deny_read_globs: Vec::new(),
@@ -2723,6 +2737,8 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                     cancel: Default::default(),
                 },
                 memory: crate::session::memory_state::SessionMemory {
+                    configured_mode: None,
+                    configured_storage: None,
                     flush_config: crate::config::MemoryFlushConfig::default(),
                     is_flushing: std::sync::atomic::AtomicBool::new(false),
                     last_flush_compaction: std::sync::atomic::AtomicU64::new(0),
@@ -2776,6 +2792,9 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 active_agent_type: parking_lot::Mutex::new(None),
                 queue_exit_reminder_on_approved_exit: Arc::new(
                     std::sync::atomic::AtomicBool::new(false),
+                ),
+                emit_local_background_tasks: Arc::new(
+                    std::sync::atomic::AtomicBool::new(true),
                 ),
                 active_skill: parking_lot::Mutex::new(None),
                 plan_mode: Arc::new(
@@ -2839,6 +2858,8 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 deferred_prefix: DeferredPrefix::new(),
                 mcp_startup_waits: Default::default(),
                 mcp_init_tasks: Default::default(),
+                weak_self: std::sync::Weak::new(),
+                startup_tasks: Default::default(),
                 extension_registry: xai_agent_lifecycle::LocalExtensionRegistry::default(),
                 last_announced_local_date: std::cell::Cell::new(
                     chrono::Local::now().date_naive(),
@@ -2847,6 +2868,7 @@ async fn cancel_propagates_to_sampler_handle_so_no_further_emission() {
                 last_search_prompt_index: std::sync::atomic::AtomicI64::new(-1),
                 last_api_request_at: std::sync::atomic::AtomicI64::new(0),
                 hook_registry: std::cell::RefCell::new(None),
+                hook_disabled: Default::default(),
                 turn_report: Default::default(),
                 turn_abort: Default::default(),
                 turn_end_tx: Default::default(),
