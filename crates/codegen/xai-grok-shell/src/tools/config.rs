@@ -209,6 +209,7 @@ impl ShellToolsetConfig {
             top_p: None,
             api_backend: Default::default(),
             auth_scheme: Default::default(),
+            request_compression: Default::default(),
             extra_headers: indexmap::IndexMap::new(),
             extra_response_includes: Vec::new(),
             query_params: indexmap::IndexMap::new(),
@@ -216,6 +217,7 @@ impl ShellToolsetConfig {
             context_window: 256_000,
             client_version: None,
             reasoning_effort: None,
+            reasoning_summary: None,
             force_http1: false,
             max_retries: None,
             rate_limit_retry_threshold: None,
@@ -236,7 +238,6 @@ impl ShellToolsetConfig {
             doom_loop_recovery: None,
             header_injector: None,
             fast: false,
-            reasoning_summary: None,
         };
         let mut toolset = base.unwrap_or_else(|| Self {
             bash: BashToolConfig::default(),

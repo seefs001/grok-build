@@ -98,6 +98,9 @@ pub struct ChatCompletionRequest {
     /// Consumers downcast via `trace.as_ref().unwrap().as_any().downcast_ref::<T>()`.
     #[serde(skip)]
     pub trace: Option<Box<dyn TraceContext>>,
+    /// Caller span's W3C `traceparent`; see [`crate::ConversationRequest::traceparent`].
+    #[serde(skip)]
+    pub traceparent: Option<String>,
 }
 
 impl ChatCompletionRequest {
@@ -125,6 +128,7 @@ impl ChatCompletionRequest {
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
         }
     }
 
@@ -152,6 +156,7 @@ impl ChatCompletionRequest {
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
         }
     }
 
@@ -853,36 +858,43 @@ impl std::fmt::Display for ServiceTier {
     }
 }
 
-/// Responses `reasoning.summary`. Stock CLI sends [`Self::Concise`].
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
+    token.parse().ok()
+}
+
+/// The `reasoning.summary` requested on the Responses API.
+/// `None` omits the field, for gateways that reject it (AWS Bedrock Mantle returns 400 for it as of 2026-09).
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+)]
 #[serde(rename_all = "lowercase")]
+#[strum(serialize_all = "snake_case")]
 pub enum ReasoningSummary {
+    None,
+    Auto,
     #[default]
     Concise,
     Detailed,
-    Auto,
 }
 
 impl ReasoningSummary {
-    pub fn as_str(self) -> &'static str {
+    pub fn to_responses_api(self) -> Option<crate::rs::ReasoningSummary> {
         match self {
-            Self::Concise => "concise",
-            Self::Detailed => "detailed",
-            Self::Auto => "auto",
+            Self::None => None,
+            Self::Auto => Some(crate::rs::ReasoningSummary::Auto),
+            Self::Concise => Some(crate::rs::ReasoningSummary::Concise),
+            Self::Detailed => Some(crate::rs::ReasoningSummary::Detailed),
         }
     }
-
-    pub fn to_responses_api(self) -> crate::rs::ReasoningSummary {
-        match self {
-            Self::Concise => crate::rs::ReasoningSummary::Concise,
-            Self::Detailed => crate::rs::ReasoningSummary::Detailed,
-            Self::Auto => crate::rs::ReasoningSummary::Auto,
-        }
-    }
-}
-
-pub fn parse_canonical_effort_token(token: &str) -> Option<ReasoningEffort> {
-    token.parse().ok()
 }
 
 pub const REASONING_EFFORT_META_KEY: &str = "reasoningEffort";
@@ -1131,18 +1143,20 @@ pub struct SamplingConfig {
     /// Reasoning effort level for reasoning models.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// Responses API `reasoning.summary`; `None` keeps the request builder's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_summary: Option<ReasoningSummary>,
     /// When true, inject `stream_tool_calls: true` into the Responses API request body so the upstream emits per-chunk argument deltas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_tool_calls: Option<bool>,
     /// SuperGrok Fast (`service_tier: priority`). Stock default is false.
     #[serde(default)]
     pub fast: bool,
-    /// Responses `reasoning.summary`. `None` means concise (stock).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reasoning_summary: Option<ReasoningSummary>,
 }
 
 impl Default for SamplingConfig {
+    /// Empty defaults so construction sites (tests especially) can use `..Default::default()` and new fields don't ripple through every literal.
+    /// `context_window` defaults to the inert minimum; real configs must set it.
     fn default() -> Self {
         Self {
             base_url: String::new(),
@@ -1158,11 +1172,11 @@ impl Default for SamplingConfig {
             conversation_group_id: None,
             query_params: indexmap::IndexMap::new(),
             env_http_headers: indexmap::IndexMap::new(),
-            context_window: NonZeroU64::new(256_000).expect("256_000 is non-zero"),
+            context_window: NonZeroU64::MIN,
             reasoning_effort: None,
+            reasoning_summary: None,
             stream_tool_calls: None,
             fast: false,
-            reasoning_summary: None,
         }
     }
 }
@@ -1191,6 +1205,8 @@ pub struct CreateResponseWrapper {
 
     /// Optional tracing context (e.g., where to persist the finalized request payload).
     pub trace: Option<Box<dyn TraceContext>>,
+    /// Caller span's W3C `traceparent`; see [`crate::ConversationRequest::traceparent`].
+    pub traceparent: Option<String>,
 
     /// xAI-specific tool definitions that can't be expressed via `async_openai`'s `rs::Tool` enum (e.g., `x_search`).
     /// They are injected as raw JSON into the serialized request body's `tools` array.
@@ -1210,6 +1226,7 @@ impl CreateResponseWrapper {
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
             extra_tool_entries: vec![],
         }
     }
@@ -1259,6 +1276,8 @@ pub struct MessagesRequestWrapper {
 
     /// Optional tracing context (e.g., where to persist the finalized request payload).
     pub trace: Option<Box<dyn TraceContext>>,
+    /// Caller span's W3C `traceparent`; see [`crate::ConversationRequest::traceparent`].
+    pub traceparent: Option<String>,
 }
 
 impl MessagesRequestWrapper {
@@ -1274,6 +1293,7 @@ impl MessagesRequestWrapper {
             x_grok_deployment_id: None,
             x_grok_user_id: None,
             trace: None,
+            traceparent: None,
         }
     }
 
@@ -1413,9 +1433,11 @@ mod tests {
         .cloned()
         .unwrap();
         let parsed = parse_reasoning_efforts_meta(Some(&meta)).unwrap();
-        assert_eq!(parsed.len(), 2);
-        assert_eq!(parsed[0].value, ReasoningEffort::High);
-        assert_eq!(parsed[1].value, ReasoningEffort::Low);
+        let [high, low] = parsed.as_slice() else {
+            panic!("expected two efforts: {parsed:?}");
+        };
+        assert_eq!(high.value, ReasoningEffort::High);
+        assert_eq!(low.value, ReasoningEffort::Low);
     }
 
     #[test]
@@ -1545,9 +1567,9 @@ mod tests {
 
             let blocks = msg.content.blocks();
             assert_eq!(blocks.len(), 1);
-            match &blocks[0] {
-                ChatContentBlock::Text { text } => assert_eq!(text, expected_content),
-                _ => panic!("Expected empty Text block"),
+            match blocks.first() {
+                Some(ChatContentBlock::Text { text }) => assert_eq!(text, expected_content),
+                other => panic!("Expected empty Text block, got {other:?}"),
             }
         }
     }

@@ -49,7 +49,7 @@ auto_update = true                     # check for updates on launch
 default = "grok-4.5"                   # model used for new sessions
 web_search = "grok-4.5"                # model used by the web_search tool
 # fast = false                         # SuperGrok Fast (service_tier: priority)
-# reasoning_summary = "concise"        # concise (default) | detailed | auto
+# reasoning_summary = "concise"        # global fallback: none | auto | concise (default) | detailed; [model.<id>].reasoning_summary wins
 # Optional picker allowlist (globs on catalog key or model id). Empty = unrestricted.
 # A signed policy pin replaces this list (model id only) and cannot be widened from here.
 # allowed_models = ["grok-4.5", "grok-4*"]
@@ -316,11 +316,19 @@ Priority for `[mcp_servers]` and `[plugins]`: `.grok/config.toml` (current dir) 
 
 ### Memory
 
-Persist knowledge across sessions. Enable memory with `GROK_MEMORY=1`, `[memory] enabled = true`, or managed remote settings.
+Persist knowledge across sessions. New users should opt into memory v2 with
+`[memory_v2] enabled = true`. Existing `GROK_MEMORY=1`, `[memory] enabled =
+true`, and managed `memory_enabled` settings continue to enable legacy memory
+unless the v2 gate is enabled.
 
 ```toml
+[memory_v2]
+enabled = true                        # primary memory-v2 switch
+capture_status_enabled = false        # expandable capture diagnostics
+
+# Legacy memory compatibility settings:
 [memory]
-enabled = false                       # enable memory
+enabled = false
 
 [memory.session]
 save_on_end = true                    # write metadata summary on session end
