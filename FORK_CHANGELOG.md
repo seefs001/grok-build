@@ -49,6 +49,12 @@ git merge upstream/main
 - **`reasoning` alias**: Chat Completions `reasoning` is accepted as an alias
   for `reasoning_content` on deltas and messages; serialization keeps the
   canonical wire name.
+- **Reasoning-before-text within one delta**: the Chat Completions stream
+  transform emits a delta's `reasoning_content` before its `content`. Servers
+  that split `<think>…</think>` (vLLM, TabbyAPI, gateways in front of them)
+  put the reasoning tail and the first answer token in the same delta, e.g.
+  `{"reasoning": " lists.", "content": "你好，"}`; stock order (text first)
+  rendered the answer as text → reopened thinking block → rest of text.
 - **ACP session config** now comes from upstream (1.0.14–1.0.16): `new_session`
   / `load_session` advertise both a `model` select and a `thought_level`
   `reasoning_effort` select; `session/set_config_option` is handled by
