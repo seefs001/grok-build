@@ -137,6 +137,30 @@ pub fn stream_chat_completions<'a>(
 
                 let delta = choice.delta;
 
+                // Reasoning must be emitted before text within one delta.
+                // Servers that split `<think>...</think>` (vLLM, TabbyAPI, and gateways in front of them) put the tail of the
+                // reasoning and the head of the answer into the SAME delta, e.g. `{"reasoning_content": " lists.", "content": "你好，"}`.
+                // Emitting text first would open a text block, then reopen a thinking block for the tail, splitting the answer in two.
+                if let Some(thought) = delta.reasoning_content
+                    && !thought.is_empty()
+                {
+                    if !first_token_emitted {
+                        first_token_emitted = true;
+                        yield SamplingEvent::FirstToken {
+                            request_id: request_id.clone(),
+                        };
+                    }
+                    chunk_has_content = true;
+                    chunk_index += 1;
+                    reasoning_acc.push_str(&thought);
+                    yield SamplingEvent::ChannelToken {
+                        request_id: request_id.clone(),
+                        channel: SamplingChannel::Reasoning,
+                        text: thought,
+                        chunk_index,
+                    };
+                }
+
                 if let Some(text) = delta.content
                     && !text.is_empty()
                 {
@@ -155,26 +179,6 @@ pub fn stream_chat_completions<'a>(
                         request_id: request_id.clone(),
                         channel: SamplingChannel::Text,
                         text,
-                        chunk_index,
-                    };
-                }
-
-                if let Some(thought) = delta.reasoning_content
-                    && !thought.is_empty()
-                {
-                    if !first_token_emitted {
-                        first_token_emitted = true;
-                        yield SamplingEvent::FirstToken {
-                            request_id: request_id.clone(),
-                        };
-                    }
-                    chunk_has_content = true;
-                    chunk_index += 1;
-                    reasoning_acc.push_str(&thought);
-                    yield SamplingEvent::ChannelToken {
-                        request_id: request_id.clone(),
-                        channel: SamplingChannel::Reasoning,
-                        text: thought,
                         chunk_index,
                     };
                 }
@@ -516,6 +520,69 @@ mod tests {
                 };
                 let rs::SummaryPart::SummaryText(t) = part;
                 assert_eq!(t.text, "thinking...");
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
+
+    /// One delta carrying both the reasoning tail and the first text token (how `</think>` splitters stream the boundary)
+    /// must emit Reasoning before Text. Emitting text first splits the answer across a reopened thinking block.
+    #[tokio::test]
+    async fn mixed_delta_emits_reasoning_before_text() {
+        let mixed = make_chunk(vec![ChatChunkDelta {
+            role: Some(Role::Assistant),
+            content: Some("你好，".into()),
+            reasoning_content: Some(" lists.".into()),
+            tool_calls: vec![],
+            tool_call_id: None,
+        }]);
+        let chunks: Vec<Result<ChatCompletionChunk, SamplingError>> = vec![
+            Ok(mixed),
+            Ok(text_chunk("很高兴见到你！")),
+            Ok(final_chunk(FinishReason::Stop)),
+        ];
+        let raw = stream::iter(chunks).boxed();
+        let events = collect(stream_chat_completions(
+            raw,
+            None,
+            rid(),
+            Duration::from_secs(60),
+        ))
+        .await;
+
+        let channel_tokens: Vec<(SamplingChannel, &str, u64)> = events
+            .iter()
+            .filter_map(|e| match e {
+                SamplingEvent::ChannelToken {
+                    channel,
+                    text,
+                    chunk_index,
+                    ..
+                } => Some((channel.clone(), text.as_str(), *chunk_index)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            channel_tokens,
+            vec![
+                (SamplingChannel::Reasoning, " lists.", 1),
+                (SamplingChannel::Text, "你好，", 2),
+                (SamplingChannel::Text, "很高兴见到你！", 3),
+            ]
+        );
+
+        match events.last().unwrap() {
+            SamplingEvent::Completed { response, .. } => {
+                assert_eq!(response.assistant_text(), "你好，很高兴见到你！");
+                assert_eq!(response.message_chunks_emitted, 2);
+                let r = response
+                    .reasoning_items()
+                    .next()
+                    .expect("reasoning sibling preserved");
+                let Some(rs::SummaryPart::SummaryText(t)) = r.summary.first() else {
+                    panic!("expected a summary part");
+                };
+                assert_eq!(t.text, " lists.");
             }
             other => panic!("expected Completed, got {other:?}"),
         }
