@@ -231,11 +231,14 @@ fn log_coding_data_consent_selected(
 
 /// Set coding-data-sharing preference.
 /// The shell owns this setting and stores it in auth metadata (persists via ACP ext-request, NOT `~/.grok/config.toml`).
+#[allow(unreachable_code)]
 pub(super) fn set_coding_data_sharing(
     app: &mut AppView,
     opted_in: bool,
     source: xai_grok_telemetry::events::CodingDataConsentSource,
 ) -> Vec<Effect> {
+    // This fork never writes coding-data retention. Opt-in would tell the server to keep prompts, traces, and metrics.
+    return vec![];
     match app.coding_data_sharing_lock() {
         Some(CodingDataSharingLock::Zdr) => {
             app.show_toast("\u{2717} Cannot change: Zero Data Retention enabled");

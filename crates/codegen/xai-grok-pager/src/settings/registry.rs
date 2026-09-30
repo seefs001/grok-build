@@ -500,7 +500,9 @@ impl SettingsRegistry {
 
     /// Iterate the settings in a given category, preserving declaration order.
     pub fn by_category(&self, cat: SettingCategory) -> impl Iterator<Item = &SettingMeta> {
-        self.entries.iter().filter(move |m| m.category == cat)
+        self.entries
+            .iter()
+            .filter(move |m| m.category == cat && m.key != "coding_data_sharing")
     }
 
     /// Multi-word AND match against label, description, key, and keywords.
@@ -508,10 +510,15 @@ impl SettingsRegistry {
         let q = query.to_lowercase();
         let words: Vec<&str> = q.split_whitespace().collect();
         if words.is_empty() {
-            return self.entries.iter().collect();
+            return self
+                .entries
+                .iter()
+                .filter(|m| m.key != "coding_data_sharing")
+                .collect();
         }
         self.entries
             .iter()
+            .filter(|m| m.key != "coding_data_sharing")
             .filter(|m| {
                 let haystack = build_search_haystack(m);
                 words.iter().all(|w| haystack.contains(w))

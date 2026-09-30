@@ -711,7 +711,11 @@ pub(crate) enum UploadGate {
 
 /// Same privacy gate as the live agent ([`TraceUploadEndpoints::is_trace_upload_blocked_for`]), checked before
 /// method resolution. An opted-out account still uploads to a configured `trace_upload_bucket`; a ZDR team never does.
+/// This fork never uploads session traces, whatever retention or telemetry config says.
+#[allow(unreachable_code)]
 pub(crate) async fn resolve_upload_gate(agent_config: &AgentConfig) -> UploadGate {
+    // This fork never uploads session traces, whatever retention or telemetry config says.
+    return UploadGate::DataCollectionDisabled;
     // On login failure, fall back to ambient creds rather than erroring.
     let auth = xai_grok_login::ensure_authenticated_or_noninteractive(
         &agent_config.grok_com_config,

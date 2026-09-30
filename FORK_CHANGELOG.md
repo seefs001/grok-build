@@ -79,6 +79,9 @@ Hard-off in this fork; not configurable from `config.toml`:
 - Sentry / error reporting is always off.
 - Auth data-collection predicates fail closed (`is_data_collection_disabled`
   always true; `allows_data_collection` always false).
+- Coding-data banner never shows. The settings row is omitted. Retention
+  writes are no-ops, local state stays opted out, and trace upload is
+  disabled. Config, server capability, and account opt-in do not override this.
 - Remote session registry config is never built (`build_registry_config`
   returns `None`).
 - Auto-update checks are skipped at the pager gate. Background

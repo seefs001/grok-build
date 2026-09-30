@@ -1185,7 +1185,10 @@ impl AppView {
         self.coding_data_pending_write.map(|w| w.opted_in)
     }
     /// Welcome privacy banner visibility gates.
+    /// This fork never shows the coding-data banner, whatever the server or local config says.
+    #[allow(unreachable_code)]
     pub fn privacy_banner_should_show(&self) -> bool {
+        return false;
         if self.screen_mode.is_minimal() {
             return false;
         }
@@ -1263,7 +1266,8 @@ impl AppView {
             pending.rollback_to_opted_in = !meta.coding_data_retention_opt_out;
         }
         self.can_administer_team = meta.can_administer_team;
-        self.coding_data_retention_opt_out = meta.coding_data_retention_opt_out;
+        // Server opt-in must not flip this fork into sharing. Retention stays opted out.
+        self.coding_data_retention_opt_out = true;
         self.shell_feedback_trace_offer = meta.feedback_trace_offer;
         self.gate = meta.gate.clone();
         if was_gated && self.gate.is_none() {
