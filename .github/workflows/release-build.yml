@@ -108,7 +108,7 @@ jobs:
           name: grok-${{ steps.package.outputs.triple }}
           path: dist/grok-${{ steps.package.outputs.triple }}.tar.gz
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   release:
     name: Publish GitHub Release
@@ -170,20 +170,21 @@ jobs:
             echo "\`\`\`"
           } > "$notes"
 
+          # GitHub rejects marking a prerelease as Latest. main is a normal
+          # release so /releases/latest/download/ works; other branches stay prereleases.
           if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-            latest_args=(--latest)
+            kind_args=(--latest --prerelease=false)
           else
-            latest_args=(--latest=false)
+            kind_args=(--latest=false --prerelease)
           fi
 
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" dist/grok-*.tar.gz dist/SHA256SUMS --clobber
-            gh release edit "$tag" --title "$title" --notes-file "$notes" "${latest_args[@]}"
+            gh release edit "$tag" --title "$title" --notes-file "$notes" "${kind_args[@]}"
           else
             gh release create "$tag" dist/grok-*.tar.gz dist/SHA256SUMS \
               --target "$GITHUB_SHA" \
               --title "$title" \
               --notes-file "$notes" \
-              --prerelease \
-              "${latest_args[@]}"
+              "${kind_args[@]}"
           fi
